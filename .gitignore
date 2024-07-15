@@ -1,4 +1,5 @@
 JJinTP_data_TW/
+*.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
