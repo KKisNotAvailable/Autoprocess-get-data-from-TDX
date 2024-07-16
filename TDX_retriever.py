@@ -1,7 +1,8 @@
 import pandas as pd
 import json
 import requests
-from datetime import date, timedelta
+import numpy as np
+from datetime import date, timedelta, datetime
 
 class BadResponse(Exception):
     '''Bad response when retrieving'''
@@ -135,11 +136,12 @@ class TDX_retriever():
             "gc": 1.0,
             "top": 1,
             "transit": [3,4,5,6,7,8,9],
+            "transfer_time": [0,60],
             "depart": tommorrow + "T08:00:00",
             "first_mile_mode": 0,
-            "first_mile_time": 10,
+            "first_mile_time": 30,
             "last_mile_mode": 0,
-            "last_mile_time": 10
+            "last_mile_time": 30
         }
 
     def _get_data_response(self, coord_from: list, coord_to: list):
@@ -171,6 +173,14 @@ class TDX_retriever():
         cur_row = [*coord_from, *coord_to]
 
         for resp in resps:
+            # --------------
+            # Error Handling
+            # --------------
+            if "429" in str(resp):
+                raise BadResponse("API rate limit exceeded")
+            
+            # responses other than 429 would return a 'result' key
+            # so the following is to handle bad responses other than 429.
             self.__log += (
                 f"({self.__cur_i}, {self.__cur_j})" +
                 str(resp) + " " +
@@ -184,6 +194,11 @@ class TDX_retriever():
                 msg = "Bad Response! " + msg
                 raise BadResponse(msg)
             
+            # try to fetch data from responses, if fail, means there's
+            # no public transportation needed between the given coords.
+            # i.e. distance should be short in general (as least for our
+            # case within the Taipei city)
+            # Therefore, return empty time and route for such pairs.
             try:
                 df = pd.DataFrame(resp.json()['data']['routes'][0])
                 df['transport_mode'] = [d['transport']['mode'] for d in df['sections']]
@@ -195,7 +210,7 @@ class TDX_retriever():
                 ])
             except:
                 self.get_log()
-                raise BadResponse(msg)
+                cur_row.extend([np.nan, np.nan, []])
                 
         return cur_row
 
@@ -226,7 +241,7 @@ class TDX_retriever():
 
 def test_single(TDX: TDX_retriever):
     c1 = [24.9788580602204,121.55598430669878]
-    c2 = [24.981549180333282,121.56397728822249]
+    c2 = [24.98197093297431,121.55628472119042]
 
 # 63000080031,121.55598430669878,24.9788580602204
 # 63000080032,121.56397728822249,24.981549180333282
@@ -241,9 +256,10 @@ def test_single(TDX: TDX_retriever):
     df.loc[len(df)] = TDX.get_transport_result(c1, c2)
 
     # print(df)
-    # df.to_csv('single_pt_demo.csv', index=False)
+    df.to_csv('single_pt_demo_bad.csv', index=False)
 
 def main():
+    print(datetime.now())
     app_id = 'ken19505-7e99114f-1228-4355'
     app_key = '15e3a19e-bf8d-44e8-9376-011e26de5133'
 
@@ -252,20 +268,20 @@ def main():
     # ===================================================
     # Get single point DEMO: using get_transport_result()
     # ===================================================
-    test_single(TDX)
+    # test_single(TDX)
 
     # ===================================================
     # Get pairwise from CSV
     # ===================================================
-    # path = ".\\JJinTP_data_TW\\Routing\\"
-    # filename = "village_centroid_TP.csv"
-    # centroids = pd.read_csv(path+filename)
+    path = ".\\JJinTP_data_TW\\Routing\\"
+    filename = "village_centroid_TP.csv"
+    centroids = pd.read_csv(path+filename)
 
-    # # shorter for testing
-    # centroids = centroids.iloc[:3]
+    # shorter for testing
+    centroids = centroids.iloc[:3]
 
-    # df = TDX.get_pairwise(centroids)
-    # df.to_csv('multi_pt_demo.csv', index=False)
+    df = TDX.get_pairwise(centroids)
+    df.to_csv('multi_pt_demo.csv', index=False)
 
 
 if __name__ == "__main__":
