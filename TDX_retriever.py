@@ -1,3 +1,10 @@
+'''
+API Reference from official github: 
+https://github.com/tdxmotc/SampleCode/blob/master/Python3/auth_TDX.py
+
+Author of other parts: Kai-Yuan Ke
+'''
+
 import pandas as pd
 import json
 import requests
@@ -25,6 +32,7 @@ class TDX_retriever():
         self.auth_url = auth_url
         self.url = url
         self._auth_response = None
+        self.__conds = None
         self.__cur_i = -1
         self.__cur_j = -1
         self.__log = ""
@@ -96,26 +104,37 @@ class TDX_retriever():
 
         return "&".join(cond_l)
 
-    def _set_condition(self) -> str:
+    def _set_condition(
+            self,
+            target_weekday: int = 3,
+            target_time: str = "T10:00:00",
+            is_depart: bool = True
+        ) -> None:
         '''
+        Can set conditions manually or would set to default.
+        1. "origin" and "destination" are not settable.
+        2. weekday should be numeric, eg. Monday = 1 and Sunday = 7.
+        3. target_time should follow the format, eg. 10am = "T10:00:00".
+        4. is_depart default to be true, meaning the time provided is set as depart time.
+
         Some brief intro to all the parameters:
         Required:
             origin: [latitude,longitude] | start place
             destination: [latitude,longitude] | end place
-            gc: 0.0 | preference of choice 0.0=cheapest, 1.0=fastest
-            top: 5 | number of routes returned, default=5
-            transit: [3,...] | ways of transportation (3:高鐵,4:台鐵,5:公車,6:捷運,7:輕軌,8:渡輪,9:纜車,20:航空)
+            gc: 1.0 | preference of choice 0.0=cheapest, 1.0=fastest
+            top: 1 | number of routes returned, default=5
+            transit: [3,...,9] | ways of transportation (3:高鐵,4:台鐵,5:公車,6:捷運,7:輕軌,8:渡輪,9:纜車,20:航空)
         Optional:
-            transfer_time: [15,60] | tranfer time tolerance between min=0 and max=60
+            transfer_time: [0,60] | tranfer time tolerance between min=0 and max=60
             depart: "2024-07-15T12:00:00" | departure time, must be later than current time
             arrival: "2024-07-15T12:00:00" | arrival time, must be later than current time
             >> NOTE: 1. fill only depart or arrival.
                     2. the search would be based on given time but might be adjusted
                         earlier or later.
             first_mile_mode: 0 | transportation method for the first mile, (0:走路,1:腳踏車,2:開車,3:共享單車)
-            first_mile_time: 10 | first mile time tolerance, max=60
+            first_mile_time: 30 | first mile time tolerance, max=60
             last_mile_mode: 0 | transportation method for the lsat mile, (0:走路,1:腳踏車,2:開車,3:共享單車)
-            last_mile_time: 10 | last mile time tolerance, max=60
+            last_mile_time: 30 | last mile time tolerance, max=60
 
         Parameters
         ----------
@@ -127,17 +146,20 @@ class TDX_retriever():
         dict
             the dictionary of conditions.
         '''
-        # TODO: let other conditions setable as kwargs.
-        tommorrow = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
-
-        return {
+        days_to_add = [7,1,2,3,4,5,6]
+        weekday_diff = target_weekday - date.today().isoweekday()
+        next_target = (date.today() + timedelta(days=days_to_add[weekday_diff])).strftime("%Y-%m-%d")
+    
+        timing_mode = "depart" if is_depart else "arrival"
+        
+        self.__conds = {
             "origin": self.coord_from,
             "destination": self.coord_to,
             "gc": 1.0,
             "top": 1,
             "transit": [3,4,5,6,7,8,9],
             "transfer_time": [0,60],
-            "depart": tommorrow + "T08:00:00",
+            timing_mode: next_target + target_time,
             "first_mile_mode": 0,
             "first_mile_time": 30,
             "last_mile_mode": 0,
@@ -148,7 +170,11 @@ class TDX_retriever():
         self.coord_from = coord_from
         self.coord_to = coord_to
 
-        cur_url = self.url + self._conds_to_str(self._set_condition())
+        # to make sure there's conditions available
+        if not self.__conds:
+            self._set_condition()
+
+        cur_url = self.url + self._conds_to_str(self.__conds)
 
         if not self._auth_response:
             self._authenticate()
@@ -256,7 +282,26 @@ def test_single(TDX: TDX_retriever):
     df.loc[len(df)] = TDX.get_transport_result(c1, c2)
 
     # print(df)
-    df.to_csv('single_pt_demo_bad.csv', index=False)
+    df.to_csv('single_pt_demo.csv', index=False)
+
+def test_multi(TDX: TDX_retriever):
+    path = ".\\JJinTP_data_TW\\Routing\\"
+    filename = "village_centroid_TP.csv"
+    centroids = pd.read_csv(path+filename)
+
+    # shorter for testing
+    centroids = centroids.iloc[:2]
+
+    time_table = {
+        "10am": "T10:00:00",
+        "6pm": "T18:00:00"
+    }
+
+    # 現在不同打的時間是分兩個檔案，但說不定之後老師會想要合併同個檔案看??
+    for k, t in time_table.items():
+        TDX._set_condition(target_time=t)
+        df = TDX.get_pairwise(centroids)
+        df.to_csv(f'multi_pt_demo_{k}.csv', index=False)
 
 def main():
     print(datetime.now())
@@ -268,20 +313,12 @@ def main():
     # ===================================================
     # Get single point DEMO: using get_transport_result()
     # ===================================================
-    # test_single(TDX)
+    test_single(TDX)
 
     # ===================================================
     # Get pairwise from CSV
     # ===================================================
-    path = ".\\JJinTP_data_TW\\Routing\\"
-    filename = "village_centroid_TP.csv"
-    centroids = pd.read_csv(path+filename)
-
-    # shorter for testing
-    centroids = centroids.iloc[:3]
-
-    df = TDX.get_pairwise(centroids)
-    df.to_csv('multi_pt_demo.csv', index=False)
+    # test_multi(TDX)
 
 
 if __name__ == "__main__":
