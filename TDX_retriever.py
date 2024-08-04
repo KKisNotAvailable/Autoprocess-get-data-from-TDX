@@ -4,7 +4,7 @@ https://github.com/tdxmotc/SampleCode/blob/master/Python3/auth_TDX.py
 
 Author of other parts: Kai-Yuan Ke
 '''
-
+import os
 import pandas as pd
 import json
 import requests
@@ -282,7 +282,7 @@ def test_single(TDX: TDX_retriever):
     df.loc[len(df)] = TDX.get_transport_result(c1, c2)
 
     # print(df)
-    df.to_csv('single_pt_demo.csv', index=False)
+    df.to_csv('output/single_pt_demo.csv', index=False)
 
 def test_multi(TDX: TDX_retriever):
     path = ".\\JJinTP_data_TW\\Routing\\"
@@ -301,14 +301,19 @@ def test_multi(TDX: TDX_retriever):
     for k, t in time_table.items():
         TDX._set_condition(target_time=t)
         df = TDX.get_pairwise(centroids)
-        df.to_csv(f'multi_pt_demo_{k}.csv', index=False)
+        df.to_csv(f'output/multi_pt_demo_{k}.csv', index=False)
 
 def main():
     print(datetime.now())
+
     with open('env/api_key.json') as f:
         ps_info = json.load(f)
     app_id = ps_info['app_id']
     app_key = ps_info['app_key']
+
+    out_path = "./output/"
+    if not os.path.isdir(out_path):
+        os.mkdir(out_path)
 
     TDX = TDX_retriever(app_id, app_key)
 
