@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import json
 
 def conds_to_str(conds: dict) -> str:
     cond_l = []
@@ -44,7 +45,12 @@ def main():
     c1 = [24.9788580602204,121.55598430669878]
     c2 = [24.981549180333282,121.56397728822249]
 
-    cond = conds_to_str(set_conds(c1, c2))
+    # cond = conds_to_str(set_conds(c1, c2))
+
+    with open('env/api_key.json') as f:
+        keys = json.load(f)
+
+    print(keys)
 
     
 

@@ -305,8 +305,10 @@ def test_multi(TDX: TDX_retriever):
 
 def main():
     print(datetime.now())
-    app_id = 'ken19505-7e99114f-1228-4355'
-    app_key = '15e3a19e-bf8d-44e8-9376-011e26de5133'
+    with open('env/api_key.json') as f:
+        ps_info = json.load(f)
+    app_id = ps_info['app_id']
+    app_key = ps_info['app_key']
 
     TDX = TDX_retriever(app_id, app_key)
 
