@@ -12,7 +12,13 @@ import numpy as np
 from datetime import date, timedelta, datetime
 
 class BadResponse(Exception):
-    '''Bad response when retrieving'''
+    '''
+    Bad response when retrieving
+    200: good response but with no result. (might be distance too short)
+    400: bad request.
+    401: invalid auth.
+    429: over limited frequency per second.
+    '''
     def __init__(self, message) -> None:
         self.message = message
         super(BadResponse, self).__init__(message)
@@ -32,6 +38,9 @@ class TDX_retriever():
         self.auth_url = auth_url
         self.url = url
         self._auth_response = None
+        # TODO: need to change the way coords are set.
+        self.coord_from = [121, 25]
+        self.coord_to = [121, 25]
         self.__conds = None
         self.__cur_i = -1
         self.__cur_j = -1
@@ -165,14 +174,18 @@ class TDX_retriever():
             "last_mile_mode": 0,
             "last_mile_time": 30
         }
+        return
+
+    def _update_coords(self, coord_from: list, coord_to: list):
+        self.__conds['origin'] = self.coord_from = coord_from
+        self.__conds['destination'] = self.coord_to = coord_to
 
     def _get_data_response(self, coord_from: list, coord_to: list):
-        self.coord_from = coord_from
-        self.coord_to = coord_to
-
         # to make sure there's conditions available
         if not self.__conds:
             self._set_condition()
+            
+        self._update_coords(coord_from, coord_to)
 
         cur_url = self.url + self._conds_to_str(self.__conds)
 
@@ -208,7 +221,7 @@ class TDX_retriever():
             # responses other than 429 would return a 'result' key
             # so the following is to handle bad responses other than 429.
             self.__log += (
-                f"({self.__cur_i}, {self.__cur_j})" +
+                f"{datetime.now()} ({self.__cur_i}, {self.__cur_j})" +
                 str(resp) + " " +
                 resp.text + "\n"
             )
@@ -227,12 +240,12 @@ class TDX_retriever():
             # Therefore, return empty time and route for such pairs.
             try:
                 df = pd.DataFrame(resp.json()['data']['routes'][0])
-                df['transport_mode'] = [d['transport']['mode'] for d in df['sections']]
-                df['mode_duration'] = [d['travelSummary']['duration'] for d in df['sections']]
+                transport_mode = [d['transport']['mode'] for d in df['sections']]
+                mode_duration = [d['travelSummary']['duration'] for d in df['sections']]
 
                 cur_row.extend([
                     df['travel_time'].iloc[0], df['transfers'].iloc[0],
-                    [[m, t] for m, t in zip(df['transport_mode'], df['mode_duration'])]
+                    [[m, t] for m, t in zip(transport_mode, mode_duration)]
                 ])
             except:
                 self.get_log()
@@ -284,28 +297,21 @@ def test_single(TDX: TDX_retriever):
     # print(df)
     df.to_csv('output/single_pt_demo.csv', index=False)
 
-def test_multi(TDX: TDX_retriever):
+def test_multi(TDX: TDX_retriever, time_symb: str, time_format: str, test_size: int = None):
     path = ".\\JJinTP_data_TW\\Routing\\"
     filename = "village_centroid_TP.csv"
     centroids = pd.read_csv(path+filename)
 
     # shorter for testing
-    centroids = centroids.iloc[:2]
+    if test_size > 0:
+        centroids = centroids.iloc[:test_size]
 
-    time_table = {
-        "10am": "T10:00:00",
-        "6pm": "T18:00:00"
-    }
-
-    # 現在不同打的時間是分兩個檔案，但說不定之後老師會想要合併同個檔案看??
-    for k, t in time_table.items():
-        TDX._set_condition(target_time=t)
-        df = TDX.get_pairwise(centroids)
-        df.to_csv(f'output/multi_pt_demo_{k}.csv', index=False)
+    # 現在不同打的時間是分開檔案，但說不定之後老師會想要合併同個檔案看??
+    TDX._set_condition(target_time=time_format)
+    df = TDX.get_pairwise(centroids)
+    df.to_csv(f'output/multi_pt_demo_{time_symb}.csv', index=False)
 
 def main():
-    print(datetime.now())
-
     with open('env/api_key.json') as f:
         ps_info = json.load(f)
     app_id = ps_info['app_id']
@@ -320,12 +326,19 @@ def main():
     # ===================================================
     # Get single point DEMO: using get_transport_result()
     # ===================================================
-    test_single(TDX)
+    # TDX = TDX_retriever(app_id, app_key)
+    # test_single(TDX)
 
     # ===================================================
     # Get pairwise from CSV
     # ===================================================
-    # test_multi(TDX)
+    time_table = {
+        "10am": "T10:00:00",
+        "6pm": "T18:00:00"
+    }
+    for k, t in time_table.items():
+        TDX = TDX_retriever(app_id, app_key)
+        test_multi(TDX, k, t, test_size=5)
 
 
 if __name__ == "__main__":
