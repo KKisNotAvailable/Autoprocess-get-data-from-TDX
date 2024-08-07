@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 import json
+import threading
+import time
 
 def conds_to_str(conds: dict) -> str:
     cond_l = []
@@ -47,15 +49,31 @@ def main():
 
     # cond = conds_to_str(set_conds(c1, c2))
 
-    with open('env/api_key.json') as f:
-        keys = json.load(f)
+    # with open('env/api_key.json') as f:
+    #     keys = json.load(f)
 
-    print(keys)
-
-    
-
+    # print(keys)
 
     # print(cond)
+
+    def print_numbers():
+        for i in range(5):
+            time.sleep(1)
+            print(f"Thread {threading.current_thread().name}: {i}")
+
+    # Create two threads
+    thread1 = threading.Thread(target=print_numbers, name="Thread 1")
+    thread2 = threading.Thread(target=print_numbers, name="Thread 2")
+
+    # Start the threads
+    thread1.start()
+    thread2.start()
+
+    # Wait for both threads to complete
+    thread1.join()
+    thread2.join()
+
+    print("Both threads have finished execution.")
     
 if __name__ == '__main__':
     main()
