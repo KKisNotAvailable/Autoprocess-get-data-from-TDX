@@ -9,6 +9,7 @@ import pandas as pd
 import json
 import requests
 import numpy as np
+from tqdm import tqdm
 from datetime import date, timedelta, datetime
 
 class BadResponse(Exception):
@@ -57,9 +58,9 @@ class TDX_retriever():
 
         self.__data = pd.DataFrame(columns=tmp_cols)
 
+    @property
     def get_log(self):
-        with open("log.txt", "w") as txt_file:
-            txt_file.write(self.__log)
+        return self.__log
 
     def _get_auth_header(self) -> dict:
         content_type = 'application/x-www-form-urlencoded'
@@ -220,8 +221,8 @@ class TDX_retriever():
             
             # responses other than 429 would return a 'result' key
             # so the following is to handle bad responses other than 429.
-            self.__log += (
-                f"{datetime.now()} ({self.__cur_i}, {self.__cur_j})" +
+            tmp_log = (
+                f"({self.__cur_i}, {self.__cur_j})" +
                 str(resp) + " " +
                 resp.text + "\n"
             )
@@ -248,7 +249,7 @@ class TDX_retriever():
                     [[m, t] for m, t in zip(transport_mode, mode_duration)]
                 ])
             except:
-                self.get_log()
+                self.__log += tmp_log
                 cur_row.extend([np.nan, np.nan, []])
                 
         return cur_row
@@ -257,7 +258,7 @@ class TDX_retriever():
         # TODO: check if there's VILLCODE in the list before
         # actually adding that into data.
         n = coord_list.shape[0]
-        for i in range(n):
+        for i in tqdm(range(n)):
             A_villcode = coord_list['VILLCODE'].iloc[i]
             A_coord = [coord_list['lat'].iloc[i], coord_list['lon'].iloc[i]]
             
@@ -297,22 +298,39 @@ def test_single(TDX: TDX_retriever):
     # print(df)
     df.to_csv('output/single_pt_demo.csv', index=False)
 
-def test_multi(TDX: TDX_retriever, time_symb: str, time_format: str, test_size: int = None):
-    path = ".\\JJinTP_data_TW\\Routing\\"
-    filename = "village_centroid_TP.csv"
-    centroids = pd.read_csv(path+filename)
-
+def get_multi(
+        TDX: TDX_retriever, 
+        centroids: pd.DataFrame, 
+        time_symb: str, time_format: str, 
+        test_size: int = None,
+        out_path: str = "./output/"
+    ):
+    print(f"Start Processing Centroids with depart time at {time_symb}...")
+    
     # shorter for testing
     if test_size > 0:
         centroids = centroids.iloc[:test_size]
 
+    if out_path[-1] != "/":
+        out_path = out_path + "/"
+
     # 現在不同打的時間是分開檔案，但說不定之後老師會想要合併同個檔案看??
     TDX._set_condition(target_time=time_format)
     df = TDX.get_pairwise(centroids)
-    df.to_csv(f'output/multi_pt_demo_{time_symb}.csv', index=False)
+    df.to_csv(f'{out_path}multi_pt_demo_{time_symb}.csv', index=False)
+
+    # Getting log: points that has no public transport time
+    log_path = "./log"
+    dt_dtr = datetime.now().strftime("%Y%m%d-%H%M")
+    log_filename = f"{log_path}/{dt_dtr}_{time_symb}_log.txt"
+    if not os.path.exists(log_path):
+        os.makedirs(log_path)
+    with open(log_filename, "w") as txt_file:
+        txt_file.write(TDX.get_log)
+
 
 def main():
-    with open('env/api_key.json') as f:
+    with open('./env/api_key.json') as f:
         ps_info = json.load(f)
     app_id = ps_info['app_id']
     app_key = ps_info['app_key']
@@ -320,8 +338,6 @@ def main():
     out_path = "./output/"
     if not os.path.isdir(out_path):
         os.mkdir(out_path)
-
-    TDX = TDX_retriever(app_id, app_key)
 
     # ===================================================
     # Get single point DEMO: using get_transport_result()
@@ -332,13 +348,17 @@ def main():
     # ===================================================
     # Get pairwise from CSV
     # ===================================================
+    path = "./JJinTP_data_TW/Routing/"
+    filename = "village_centroid_TP.csv"
+    centroids = pd.read_csv(path+filename)
+
     time_table = {
         "10am": "T10:00:00",
         "6pm": "T18:00:00"
     }
     for k, t in time_table.items():
         TDX = TDX_retriever(app_id, app_key)
-        test_multi(TDX, k, t, test_size=5)
+        get_multi(TDX, centroids, k, t, test_size=5, out_path=out_path)
 
 
 if __name__ == "__main__":
