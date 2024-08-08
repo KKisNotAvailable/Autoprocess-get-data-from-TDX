@@ -4,6 +4,7 @@ https://github.com/tdxmotc/SampleCode/blob/master/Python3/auth_TDX.py
 
 Author of other parts: Kai-Yuan Ke
 '''
+import sys
 import os
 import pandas as pd
 import json
@@ -330,7 +331,15 @@ def get_multi(
 
 
 def main():
-    with open('./env/api_key.json') as f:
+    if len(sys.argv) <= 1:
+        print("Please provide a file path to the api key info.")
+        return
+    print("This program will only take the last argument as the api file.")
+    if ".json" not in sys.argv[-1]:
+        print("Should provide a api key file in json.")
+        return
+    
+    with open(sys.argv[-1]) as f:
         ps_info = json.load(f)
     app_id = ps_info['app_id']
     app_key = ps_info['app_key']
