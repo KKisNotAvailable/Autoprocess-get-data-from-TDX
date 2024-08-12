@@ -200,7 +200,20 @@ class TDX_retriever():
         '''
         Will return back and forth results from the given two coords.
 
-
+        Parameters
+        ----------
+        coord_from: list.
+            looks like [24, 121].
+        coord_to: list.
+            looks like [24, 121].
+        
+        Return
+        ------
+            [
+                coord_A, coord_B,
+                A2B_time_spent, A2B_transfer_times, [A2B_modes and mode_time_spent],
+                B2A_time_spent, B2A_transfer_times, [B2A_modes and mode_time_spent]
+            ]
         '''
         resps = [
             self._get_data_response(coord_from, coord_to),
@@ -255,9 +268,26 @@ class TDX_retriever():
                 
         return cur_row
 
-    def get_pairwise(self, coord_list: pd.DataFrame) -> pd.DataFrame:
-        # TODO: check if there's VILLCODE in the list before
-        # actually adding that into data.
+    def get_pairwise_unpaired(self, coord_list: pd.DataFrame) -> pd.DataFrame:
+        '''
+        This method gets the coords from a list of coords and pair them using loop
+        to get the calculated public transport time between them.
+
+        Parameters
+        ----------
+        coord_list: pd.DataFrame
+            three columns in this dataframe: villcode, lon, lat. each row represents
+            a village, the lon and lat is this village's centroid position.
+
+        Return    
+        ------
+            a dataframe with pair routing results. length should be n * (n-1) / 2,
+            where n is the length of the coord_list.
+        '''
+        # make sure the later code could run even without villcode provided.
+        if 'VILLCODE' not in coord_list.columns:
+            coord_list['VILLCODE'] = 0
+
         n = coord_list.shape[0]
         for i in tqdm(range(n)):
             A_villcode = coord_list['VILLCODE'].iloc[i]
@@ -271,11 +301,44 @@ class TDX_retriever():
 
                 new_row = []
                 if self.__add_villcode:
-                    # TODO: change the list to be extended
                     new_row.extend([A_villcode, B_villcode])
                 new_row.extend(self.get_transport_result(A_coord, B_coord))
 
                 self.__data.loc[len(self.__data)] = new_row
+
+        return self.__data
+    
+    def get_pairwise_paired(self, coord_list: pd.DataFrame) -> pd.DataFrame:
+        '''
+        This method gets the coords from a list of coords and pair them using loop
+        to get the calculated public transport time between them.
+
+        Parameters
+        ----------
+        coord_list: pd.DataFrame
+            six columns in this dataframe: villcode, lon, lat of village A and B. 
+            each row represents a pair of village.
+
+        Return
+        ------
+            a dataframe with pair routing results. length should be the same 
+            as the length of the coord_list.
+        '''
+        n = coord_list.shape[0]
+        for i in tqdm(range(n)):
+            A_villcode = coord_list['A_VCODE'].iloc[i]
+            A_coord = [coord_list['A_lat'].iloc[i], coord_list['A_lon'].iloc[i]]
+            
+            self.__cur_i = i
+            B_villcode = coord_list['B_VCODE'].iloc[i]
+            B_coord = [coord_list['B_lat'].iloc[i], coord_list['B_lon'].iloc[i]]
+
+            new_row = []
+            if self.__add_villcode:
+                new_row.extend([A_villcode, B_villcode])
+            new_row.extend(self.get_transport_result(A_coord, B_coord))
+
+            self.__data.loc[len(self.__data)] = new_row
 
         return self.__data
 
@@ -303,7 +366,7 @@ def get_multi(
         TDX: TDX_retriever, 
         centroids: pd.DataFrame, 
         time_symb: str, time_format: str, 
-        test_size: int = None,
+        test_size: int = 0,
         out_path: str = "./output/"
     ):
     print(f"Start Processing Centroids with depart time at {time_symb}...")
@@ -317,7 +380,12 @@ def get_multi(
 
     # 現在不同打的時間是分開檔案，但說不定之後老師會想要合併同個檔案看??
     TDX._set_condition(target_time=time_format)
-    df = TDX.get_pairwise(centroids)
+    # get result from unpaired centroids file.
+    if len(centroids.columns) == 3:
+        df = TDX.get_pairwise_unpaired(centroids)
+    # get result from paired centroids.
+    else:
+        df = TDX.get_pairwise_paired(centroids)
     df.to_csv(f'{out_path}multi_pt_demo_{time_symb}.csv', index=False)
 
     # Getting log: points that has no public transport time
@@ -335,11 +403,13 @@ def main():
         print("Please provide a file path to the api key info.")
         return
     print("This program will only take the last argument as the api file.")
-    if ".json" not in sys.argv[-1]:
+    
+    api_filepath = sys.argv[-1]
+    if ".json" not in api_filepath:
         print("Should provide a api key file in json.")
         return
     
-    with open(sys.argv[-1]) as f:
+    with open(api_filepath) as f:
         ps_info = json.load(f)
     app_id = ps_info['app_id']
     app_key = ps_info['app_key']
@@ -347,6 +417,11 @@ def main():
     out_path = "./output/"
     if not os.path.isdir(out_path):
         os.mkdir(out_path)
+
+    batch_num = 0
+    for s in api_filepath:
+        if s.isnumeric():
+            batch_num = int(s)
 
     # ===================================================
     # Get single point DEMO: using get_transport_result()
@@ -358,7 +433,8 @@ def main():
     # Get pairwise from CSV
     # ===================================================
     path = "./JJinTP_data_TW/Routing/"
-    filename = "village_centroid_TP.csv"
+    # filename = "village_centroid_TP.csv" # unpaired data
+    filename = f"in_pairs_sub{batch_num}.csv" # paired data
     centroids = pd.read_csv(path+filename)
 
     time_table = {
@@ -367,7 +443,7 @@ def main():
     }
     for k, t in time_table.items():
         TDX = TDX_retriever(app_id, app_key)
-        get_multi(TDX, centroids, k, t, test_size=5, out_path=out_path)
+        get_multi(TDX, centroids, k, t, test_size=0, out_path=out_path)
 
 
 if __name__ == "__main__":
