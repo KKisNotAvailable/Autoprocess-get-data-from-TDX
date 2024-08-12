@@ -365,7 +365,8 @@ def test_single(TDX: TDX_retriever):
 def get_multi(
         TDX: TDX_retriever, 
         centroids: pd.DataFrame, 
-        time_symb: str, time_format: str, 
+        time_symb: str, time_format: str,
+        batch_num: int = None,
         test_size: int = 0,
         out_path: str = "./output/"
     ):
@@ -386,7 +387,12 @@ def get_multi(
     # get result from paired centroids.
     else:
         df = TDX.get_pairwise_paired(centroids)
-    df.to_csv(f'{out_path}multi_pt_demo_{time_symb}.csv', index=False)
+    
+    out_name = f'{out_path}multi_pt_demo_{time_symb}'
+    if batch_num:
+        out_name += f"_{batch_num}"
+
+    df.to_csv(out_name+'.csv', index=False)
 
     # Getting log: points that has no public transport time
     log_path = "./log"
@@ -443,7 +449,10 @@ def main():
     }
     for k, t in time_table.items():
         TDX = TDX_retriever(app_id, app_key)
-        get_multi(TDX, centroids, k, t, test_size=0, out_path=out_path)
+        get_multi(
+            TDX, centroids, k, t, 
+            batch_num=batch_num, test_size=0, out_path=out_path
+        )
 
 
 if __name__ == "__main__":
