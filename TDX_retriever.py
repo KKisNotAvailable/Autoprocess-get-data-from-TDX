@@ -19,7 +19,12 @@ class BadResponse(Exception):
     200: good response but with no result. (might be distance too short)
     400: bad request.
     401: invalid auth.
+    404: spec params is wrong.
     429: over limited frequency per second.
+
+    But for 404, when I encounter that, it was possibly because of
+    some limitation? but not token access tho, since one program call use the 
+    same access token
     '''
     def __init__(self, message) -> None:
         self.message = message
@@ -62,8 +67,16 @@ class TDX_retriever():
     @property
     def get_log(self):
         return self.__log
+    
+    def write_log(self, log_path: str = "./log", additional_naming: str = ""):
+        dt_dtr = datetime.now().strftime("%Y%m%d-%H%M")
+        log_filename = f"{log_path}/{dt_dtr}_{additional_naming}log.txt"
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
+        with open(log_filename, "w") as txt_file:
+            txt_file.write(self.__log)
 
-    def _get_auth_header(self) -> dict:
+    def __get_auth_header(self) -> dict:
         content_type = 'application/x-www-form-urlencoded'
         grant_type = 'client_credentials'
 
@@ -84,7 +97,7 @@ class TDX_retriever():
         }
     
     def _authenticate(self) -> None:
-        self._auth_response = requests.post(self.auth_url, self._get_auth_header())
+        self._auth_response = requests.post(self.auth_url, self.__get_auth_header())
 
     def _conds_to_str(self, conds: dict) -> str:
         '''
@@ -182,6 +195,13 @@ class TDX_retriever():
         self.__conds['origin'] = self.coord_from = coord_from
         self.__conds['destination'] = self.coord_to = coord_to
 
+    def _auth_tester(self):
+        self._authenticate()
+        auth_JSON = json.loads(self._auth_response.text)
+        access_token = auth_JSON.get('access_token')
+
+        print(access_token)
+
     def _get_data_response(self, coord_from: list, coord_to: list):
         # to make sure there's conditions available
         if not self.__conds:
@@ -192,6 +212,7 @@ class TDX_retriever():
         cur_url = self.url + self._conds_to_str(self.__conds)
 
         if not self._auth_response:
+            # print("new_token_get")
             self._authenticate()
 
         return requests.get(cur_url, headers=self._get_data_header())
@@ -241,11 +262,12 @@ class TDX_retriever():
                 resp.text + "\n"
             )
             msg = (
-                f"Get {str(resp)}: {resp.json()['result']}"
+                f"Get {str(resp)}: {resp.json()['result']}" 
                 f" when retrieving from (i, j)=({self.__cur_i}, {self.__cur_j})"
             )
             if "200" not in str(resp):
-                msg = "Bad Response! " + msg
+                msg = f"Bad Response! msg: '{resp.json()['error']['msg']}'" + msg
+                self.write_log()
                 raise BadResponse(msg)
             
             # try to fetch data from responses, if fail, means there's
@@ -345,11 +367,15 @@ class TDX_retriever():
 
 def test_single(TDX: TDX_retriever):
     c1 = [24.9788580602204,121.55598430669878]
-    c2 = [24.98197093297431,121.55628472119042]
+    c2 = [25.001153300303976,121.5042516466285]
 
 # 63000080031,121.55598430669878,24.9788580602204
 # 63000080032,121.56397728822249,24.981549180333282
 # 63000080041,121.55628472119042,24.98197093297431
+
+# 65000030010,121.5042516466285,25.001153300303976
+# 65000030007,121.49481580385896,25.000770213112368
+
 
     cols = [
         'A_lat', 'A_lon', 'B_lat', 'B_lon',
@@ -366,7 +392,7 @@ def get_multi(
         TDX: TDX_retriever, 
         centroids: pd.DataFrame, 
         time_symb: str, time_format: str,
-        batch_num: int = None,
+        batch_num: str = None,
         test_size: int = 0,
         out_path: str = "./output/"
     ):
@@ -395,22 +421,15 @@ def get_multi(
     df.to_csv(out_name+'.csv', index=False)
 
     # Getting log: points that has no public transport time
-    log_path = "./log"
-    dt_dtr = datetime.now().strftime("%Y%m%d-%H%M")
-    log_filename = f"{log_path}/{dt_dtr}_{time_symb}_log.txt"
-    if not os.path.exists(log_path):
-        os.makedirs(log_path)
-    with open(log_filename, "w") as txt_file:
-        txt_file.write(TDX.get_log)
+    TDX.write_log(log_path="./log", additional_naming=f"{time_symb}_")
 
 
 def main():
     if len(sys.argv) <= 1:
         print("Please provide a file path to the api key info.")
         return
-    print("This program will only take the last argument as the api file.")
     
-    api_filepath = sys.argv[-1]
+    api_filepath = sys.argv[1]
     if ".json" not in api_filepath:
         print("Should provide a api key file in json.")
         return
@@ -424,15 +443,18 @@ def main():
     if not os.path.isdir(out_path):
         os.mkdir(out_path)
 
-    batch_num = 0
-    for s in api_filepath:
-        if s.isnumeric():
-            batch_num = int(s)
+    # key_ver = 0
+    # for s in api_filepath:
+    #     if s.isnumeric():
+    #         key_ver = int(s)
+
+    batch_num = sys.argv[2]
 
     # ===================================================
     # Get single point DEMO: using get_transport_result()
     # ===================================================
     # TDX = TDX_retriever(app_id, app_key)
+    # TDX._auth_tester()
     # test_single(TDX)
 
     # ===================================================

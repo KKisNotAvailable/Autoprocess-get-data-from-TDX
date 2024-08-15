@@ -93,7 +93,7 @@ class Helper():
 def main():
     h = Helper()
     # h.get_in_pair()
-    h.data_into_x_splits(x=21)
+    h.data_into_x_splits(x=15)
     
 
 
