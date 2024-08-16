@@ -471,6 +471,7 @@ def main():
     }
     for k, t in time_table.items():
         TDX = TDX_retriever(app_id, app_key)
+        TDX._auth_tester()
         get_multi(
             TDX, centroids, k, t, 
             batch_num=batch_num, test_size=0, out_path=out_path
