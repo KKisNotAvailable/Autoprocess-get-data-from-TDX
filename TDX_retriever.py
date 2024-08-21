@@ -12,6 +12,7 @@ import requests
 import numpy as np
 from tqdm import tqdm
 from datetime import date, timedelta, datetime
+import time
 
 class BadResponse(Exception):
     '''
@@ -215,7 +216,15 @@ class TDX_retriever():
             # print("new_token_get")
             self._authenticate()
 
-        return requests.get(cur_url, headers=self._get_data_header())
+        # if it stops here, could be response waited too long?
+        try:
+            resp = requests.get(cur_url, headers=self._get_data_header())
+        except:
+            # wait for 3 sec and try again
+            time.sleep(3)
+            resp = requests.get(cur_url, headers=self._get_data_header())
+
+        return resp
     
     def get_transport_result(self, coord_from: list, coord_to: list) -> list:
         '''
