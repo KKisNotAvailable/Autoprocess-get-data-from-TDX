@@ -44,16 +44,36 @@ def set_conds(coord_from: list, coord_to: list) -> dict:
     }
 
 
-class request_test:
-    def __init__(self, app_id, app_key) -> None:
+class request_test():
+    def __init__(
+            self, 
+            app_id, app_key,
+            add_villcode: bool = False,
+            auth_url="https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
+            url="https://tdx.transportdata.tw/api/maas/routing?"
+        ):
         self.__app_id = app_id
         self.__app_key = app_key
-        self.auth_url="https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
-        self.url="https://tdx.transportdata.tw/api/maas/routing?"
-        self.__conds = None
+        self.__add_villcode = add_villcode
+        self.auth_url = auth_url
+        self.url = url
         self._auth_response = None
+        # TODO: need to change the way coords are set.
         self.coord_from = [121, 25]
         self.coord_to = [121, 25]
+        self.__conds = None
+        self.__cur_i = -1
+        self.__cur_j = -1
+        self.__log = ""
+
+        tmp_cols = []
+        if self.__add_villcode:
+            tmp_cols.extend(['A_villcode', 'B_villcode'])
+        tmp_cols.extend([
+            'A_lat', 'A_lon', 'B_lat', 'B_lon',
+            'AB_travel_time', 'AB_transfer_cnt', 'AB_route',
+            'BA_travel_time', 'BA_transfer_cnt', 'BA_route'
+        ])
     
     def __get_auth_header(self) -> dict:
         content_type = 'application/x-www-form-urlencoded'
@@ -69,7 +89,8 @@ class request_test:
     def _get_data_header(self) -> dict:
         auth_JSON = json.loads(self._auth_response.text)
         access_token = auth_JSON.get('access_token')
-        # access_token = 'eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJER2lKNFE5bFg4WldFajlNNEE2amFVNm9JOGJVQ3RYWGV6OFdZVzh3ZkhrIn0.eyJleHAiOjE3MjM3OTg0MzEsImlhdCI6MTcyMzcxMjAzMSwianRpIjoiMThlNWYzODYtNzRiNS00MjFmLWE1MjYtY2M4MGIzOTFmYTY0IiwiaXNzIjoiaHR0cHM6Ly90ZHgudHJhbnNwb3J0ZGF0YS50dy9hdXRoL3JlYWxtcy9URFhDb25uZWN0Iiwic3ViIjoiN2E5ZDY2NjctZTU1Zi00ODNiLWFmNjQtM2I5MDc5MDhkNWQ5IiwidHlwIjoiQmVhcmVyIiwiYXpwIjoia2VuMTk1MDUtN2U5OTExNGYtMTIyOC00MzU1IiwiYWNyIjoiMSIsInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJzdGF0aXN0aWMiLCJwcmVtaXVtIiwicGFya2luZ0ZlZSIsIm1hYXMiLCJhZHZhbmNlZCIsImdlb2luZm8iLCJ2YWxpZGF0b3IiLCJ0b3VyaXNtIiwiaGlzdG9yaWNhbCIsImJhc2ljIl19LCJzY29wZSI6InByb2ZpbGUgZW1haWwiLCJ1c2VyIjoiOGIzOGRiMmEifQ.hEZZAmJrHEe9tPjJath6P0uaIUFOdNVRCyvtxCRceXfZXGzIHBWxEH2HiugGv0mgbQMk-XgeFDsBNjSh6BSWjrugEj9M0O4Au7LJdZ4X0uSPkxpu8i6qnjyRwIiRQi7BMbvbMibF5-tD0QKwPKaYOmB4mhrNJ-fgPbWUlRBSkku4-6FRrvnWyIZpXr-WNVdFknJDc4kkgBF34yXfuVH1NThXqtt1JkkL2I-nfvUOdPBvzK_xkKoHc8kaTkhuvTRIQIC6rZalaNtLdjx9Ko-05UWubij7251LAfQpaXKA2Xbg1Ux-95kauWgIupo5DV2-fHXHB1npKgmlqW5eyprgYA'
+        access_token = 'eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJER2lKNFE5bFg4WldFajlNNEE2amFVNm9JOGJVQ3RYWGV6OFdZVzh3ZkhrIn0.eyJleHAiOjE3MjM3OTg0MzEsImlhdCI6MTcyMzcxMjAzMSwianRpIjoiMThlNWYzODYtNzRiNS00MjFmLWE1MjYtY2M4MGIzOTFmYTY0IiwiaXNzIjoiaHR0cHM6Ly90ZHgudHJhbnNwb3J0ZGF0YS50dy9hdXRoL3JlYWxtcy9URFhDb25uZWN0Iiwic3ViIjoiN2E5ZDY2NjctZTU1Zi00ODNiLWFmNjQtM2I5MDc5MDhkNWQ5IiwidHlwIjoiQmVhcmVyIiwiYXpwIjoia2VuMTk1MDUtN2U5OTExNGYtMTIyOC00MzU1IiwiYWNyIjoiMSIsInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJzdGF0aXN0aWMiLCJwcmVtaXVtIiwicGFya2luZ0ZlZSIsIm1hYXMiLCJhZHZhbmNlZCIsImdlb2luZm8iLCJ2YWxpZGF0b3IiLCJ0b3VyaXNtIiwiaGlzdG9yaWNhbCIsImJhc2ljIl19LCJzY29wZSI6InByb2ZpbGUgZW1haWwiLCJ1c2VyIjoiOGIzOGRiMmEifQ.hEZZAmJrHEe9tPjJath6P0uaIUFOdNVRCyvtxCRceXfZXGzIHBWxEH2HiugGv0mgbQMk-XgeFDsBNjSh6BSWjrugEj9M0O4Au7LJdZ4X0uSPkxpu8i6qnjyRwIiRQi7BMbvbMibF5-tD0QKwPKaYOmB4mhrNJ-fgPbWUlRBSkku4-6FRrvnWyIZpXr-WNVdFknJDc4kkgBF34yXfuVH1NThXqtt1JkkL2I-nfvUOdPBvzK_xkKoHc8kaTkhuvTRIQIC6rZalaNtLdjx9Ko-05UWubij7251LAfQpaXKA2Xbg1Ux-95kauWgIupo5DV2-fHXHB1npKgmlqW5eyprgYA'
+
 
         return{
             'authorization': 'Bearer ' + access_token,
@@ -79,12 +100,77 @@ class request_test:
     def _authenticate(self) -> None:
         self._auth_response = requests.post(self.auth_url, self.__get_auth_header())
 
+    def _conds_to_str(self, conds: dict) -> str:
+        '''
+        The conditions are supposed to be either a list, a str, or a number.
+
+        Parameters
+        ----------
+        conds: dict.
+            A dictionary containing conditions of query.
+
+        Return
+        ------
+        str
+            Merged str of conditions, will be appended on the end of the request url.
+        '''
+        cond_l = []
+
+        for k, v in conds.items():
+            if isinstance(v, list):
+                # "," = "%2C"
+                v = "%2C".join(str(i) for i in v)
+            elif isinstance(v, str):
+                v = v.replace(":", "%3A")
+            else:
+                v = str(v)
+
+            cond_l.append(k + "=" + v)
+
+        return "&".join(cond_l)
+
     def _set_condition(
             self,
             target_weekday: int = 3,
             target_time: str = "T10:00:00",
             is_depart: bool = True
         ) -> None:
+        '''
+        Can set conditions manually or would set to default.
+        1. "origin" and "destination" are not settable.
+        2. weekday should be numeric, eg. Monday = 1 and Sunday = 7.
+        3. target_time should follow the format, eg. 10am = "T10:00:00".
+        4. is_depart default to be true, meaning the time provided is set as depart time.
+
+        Some brief intro to all the parameters:
+        Required:
+            origin: [latitude,longitude] | start place
+            destination: [latitude,longitude] | end place
+            gc: 1.0 | preference of choice 0.0=cheapest, 1.0=fastest
+            top: 1 | number of routes returned, default=5
+            transit: [3,...,9] | ways of transportation (3:高鐵,4:台鐵,5:公車,6:捷運,7:輕軌,8:渡輪,9:纜車,20:航空)
+        Optional:
+            transfer_time: [0,60] | tranfer time tolerance between min=0 and max=60
+            depart: "2024-07-15T12:00:00" | departure time, must be later than current time
+            arrival: "2024-07-15T12:00:00" | arrival time, must be later than current time
+            >> NOTE: 1. fill only depart or arrival.
+                    2. the search would be based on given time but might be adjusted
+                        earlier or later.
+            first_mile_mode: 0 | transportation method for the first mile, (0:走路,1:腳踏車,2:開車,3:共享單車)
+            first_mile_time: 30 | first mile time tolerance, max=60
+            last_mile_mode: 0 | transportation method for the lsat mile, (0:走路,1:腳踏車,2:開車,3:共享單車)
+            last_mile_time: 30 | last mile time tolerance, max=60
+
+        Parameters
+        ----------
+        coord_from: list
+        coord_to: list
+        
+        Return
+        ------
+        dict
+            the dictionary of conditions.
+        '''
         days_to_add = [7,1,2,3,4,5,6]
         weekday_diff = target_weekday - date.today().isoweekday()
         next_target = (date.today() + timedelta(days=days_to_add[weekday_diff])).strftime("%Y-%m-%d")
@@ -105,23 +191,18 @@ class request_test:
             "last_mile_time": 30
         }
         return
-    
-    def _conds_to_str(self, conds: dict) -> str:
-        cond_l = []
-        for k, v in conds.items():
-            if isinstance(v, list):
-                v = "%2C".join(str(i) for i in v)
-            elif isinstance(v, str):
-                v = v.replace(":", "%3A")
-            else:
-                v = str(v)
-            cond_l.append(k + "=" + v)
-        return "&".join(cond_l)
-    
+
     def _update_coords(self, coord_from: list, coord_to: list):
         self.__conds['origin'] = self.coord_from = coord_from
         self.__conds['destination'] = self.coord_to = coord_to
 
+    def _auth_tester(self):
+        self._authenticate()
+        auth_JSON = json.loads(self._auth_response.text)
+        access_token = auth_JSON.get('access_token')
+
+        print(access_token)
+    
     def data_resp(self, coord_from: list, coord_to: list):
 
         if not self.__conds:
@@ -135,7 +216,7 @@ class request_test:
             # print("new_token_get")
             self._authenticate()
 
-        requests.get(cur_url, headers=self._get_data_header())
+        return requests.get(cur_url, headers=self._get_data_header())
 
 def main():
     c1 = [24.9788580602204,121.55598430669878]
@@ -143,18 +224,17 @@ def main():
 
     # cond = conds_to_str(set_conds(c1, c2))
 
-    with open('env/api_key.json') as f:
+    with open('env/api_key1.json') as f:
         keys = json.load(f)
 
-    # print(keys)
+    print(keys)
 
     # print(cond)
 
     tester = request_test(keys['app_id'], keys['app_key'])
-    tester._authenticate()
-    # tester.data_resp(c1, c2)
-
-    # print(tester.json())
+    resp = tester.data_resp(c1, c2)
+    print(resp.text)
+    # print(resp.json())
 
     # -----------------
     # test multi thread
