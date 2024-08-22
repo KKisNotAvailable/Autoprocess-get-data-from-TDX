@@ -1,6 +1,7 @@
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
+import json
 
 
 class Helper():
@@ -89,12 +90,58 @@ class Helper():
 
             cur_head += gap
         return
+    
+    def task_generator(self, sub_task_cnt: int = 3):
+        '''
+        This method generates the task file in vscode, so we don't 
+        need to manually open several terminals and type the commands.
+        '''
+        keys = 3
+        batch_size = sub_task_cnt // keys
+
+        activate_venv = "env/Scripts/Activate.ps1" # for powershell
+
+        tasks = [
+            {
+                "label": f"get TDX with key {n // batch_size + 1} on file {n+1}",
+                "type": "shell",
+                "command": f"env\\run_py_key{n // batch_size + 1}.bat {n+1}"
+            }
+            for n in range(sub_task_cnt)
+        ]
+
+        taskall = {
+            "label": "run all",
+            "dependsOn": [t['label'] for t in tasks],
+            "dependsOrder": "parallel",
+            "presentation": {
+                "reveal": "always",
+                "revealProblems": "onProblem",
+                "panel": "new"
+            }
+        }
+
+        tasks.append(taskall)
+
+        to_json = {
+            "version": "2.0.0",
+            "tasks": tasks
+        }
+
+        with open(f'{self.path}tasks.json', 'w') as fp:
+            json.dump(
+                to_json, fp, 
+                sort_keys=False, indent=4, separators=(',', ': ')
+            )
 
 def main():
     h = Helper()
+    sub_file_cnt = 21
     # h.get_in_pair() # this generates the "in_pair.csv"
-    h.data_into_x_splits(x=21) # this splits in_pair.csv into sub files for multi tasking.
+    # h.data_into_x_splits(x=sub_file_cnt) # this splits in_pair.csv into sub files for multi tasking.
     
+    h2 = Helper("./.vscode/")
+    h2.task_generator(sub_file_cnt)
 
 
 if __name__ == "__main__":
