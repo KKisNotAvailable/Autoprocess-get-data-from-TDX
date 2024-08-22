@@ -138,10 +138,10 @@ def main():
     h = Helper()
     sub_file_cnt = 21
     # h.get_in_pair() # this generates the "in_pair.csv"
-    # h.data_into_x_splits(x=sub_file_cnt) # this splits in_pair.csv into sub files for multi tasking.
+    h.data_into_x_splits(x=sub_file_cnt) # this splits in_pair.csv into sub files for multi tasking.
     
-    h2 = Helper("./.vscode/")
-    h2.task_generator(sub_file_cnt)
+    # h2 = Helper("./.vscode/")
+    # h2.task_generator(sub_file_cnt)
 
 
 if __name__ == "__main__":
