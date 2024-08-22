@@ -19,13 +19,15 @@ class BadResponse(Exception):
     Bad response when retrieving
     200: good response but with no result. (might be distance too short)
     400: bad request.
-    401: invalid auth.
+    401: invalid auth (token expire will throw this).
     404: spec params is wrong.
     429: over limited frequency per second.
 
     But for 404, when I encounter that, it was possibly because of
     some limitation? but not token access tho, since one program call use the 
-    same access token
+    same access token.
+    Since I tested on some points reported to trigger 404, 
+    and that point actually worked, so not sure why 404 occured.
     '''
     def __init__(self, message) -> None:
         self.message = message
@@ -70,6 +72,10 @@ class TDX_retriever():
         return self.__log
     
     def write_log(self, log_path: str = "./log", additional_naming: str = ""):
+        '''
+        Currently, writes log when response not 200 occurs and end of the program
+        Both would write all the no data case and all the bad responses (some coord pair might overlap)
+        '''
         dt_dtr = datetime.now().strftime("%Y%m%d-%H%M")
         log_filename = f"{log_path}/{dt_dtr}_{additional_naming}log.txt"
         if not os.path.exists(log_path):
@@ -217,11 +223,12 @@ class TDX_retriever():
             self._authenticate()
 
         # if it stops here, could be response waited too long?
+        # 或反過來說，如果等太久會卡在這步嗎
         try:
             resp = requests.get(cur_url, headers=self._get_data_header())
         except:
-            # wait for 3 sec and try again
-            time.sleep(3)
+            print("Really gets here!?")
+            time.sleep(1)
             resp = requests.get(cur_url, headers=self._get_data_header())
 
         return resp
@@ -245,45 +252,50 @@ class TDX_retriever():
                 B2A_time_spent, B2A_transfer_times, [B2A_modes and mode_time_spent]
             ]
         '''
-        resps = [
-            self._get_data_response(coord_from, coord_to),
-            self._get_data_response(coord_to, coord_from)
-        ]
+        # resps = [
+        #     self._get_data_response(coord_from, coord_to),
+        #     self._get_data_response(coord_to, coord_from)
+        # ]
 
-        # this show the standard response, same as the result on its webpage.
-        # print(resp1)
-        # print(resp1.text)
+        pairs = [
+            [coord_from, coord_to],
+            [coord_to, coord_from]
+        ]
 
         cur_row = [*coord_from, *coord_to]
 
-        for resp in resps:
+        def get_resp():
+            return self._get_data_response(p[0], p[1])
+
+        for p in pairs:
+            resp = get_resp()
             # --------------
             # Error Handling
             # --------------
-            if "429" in str(resp):
-                raise BadResponse("API rate limit exceeded")
+            # 429 and 401 (when invalid token) would not return a 'result' key.
+            while "429" in str(resp):
+                time.sleep(0.5)
+                resp = get_resp()
+                # raise BadResponse("API rate limit exceeded")
             
-            # responses other than 429 would return a 'result' key
-            # so the following is to handle bad responses other than 429.
             tmp_log = (
                 f"({self.__cur_i}, {self.__cur_j})" +
                 str(resp) + " " +
                 resp.text + "\n"
             )
-            msg = (
-                f"Get {str(resp)}: {resp.json()['result']}" 
-                f" when retrieving from (i, j)=({self.__cur_i}, {self.__cur_j})"
-            )
-            if "200" not in str(resp):
-                msg = f"Bad Response! msg: '{resp.json()['error']['msg']}'" + msg
+
+            while "200" not in str(resp):
+                self.__log += tmp_log
+                # sleep for 1 sec, authenticate again, then get response again
+                time.sleep(15)
+                self._authenticate() # would generate new access token
+                resp = get_resp()
+                # 有error是出現在288行，代表是要重新拿過token，但不知怎地新token是empty
+                # 先把sleep時間拉長不知道有沒有用
+
                 self.write_log()
-                raise BadResponse(msg)
+                # raise BadResponse(tmp_log)
             
-            # try to fetch data from responses, if fail, means there's
-            # no public transportation needed between the given coords.
-            # i.e. distance should be short in general (as least for our
-            # case within the Taipei city)
-            # Therefore, return empty time and route for such pairs.
             try:
                 df = pd.DataFrame(resp.json()['data']['routes'][0])
                 transport_mode = [d['transport']['mode'] for d in df['sections']]
@@ -294,6 +306,7 @@ class TDX_retriever():
                     [[m, t] for m, t in zip(transport_mode, mode_duration)]
                 ])
             except:
+                # response is 200 but empty result returned (location pair is too close for public transport)
                 self.__log += tmp_log
                 cur_row.extend([np.nan, np.nan, []])
                 
@@ -480,7 +493,7 @@ def main():
     }
     for k, t in time_table.items():
         TDX = TDX_retriever(app_id, app_key)
-        TDX._auth_tester()
+        # TDX._auth_tester()
         get_multi(
             TDX, centroids, k, t, 
             batch_num=batch_num, test_size=0, out_path=out_path
