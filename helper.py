@@ -92,8 +92,8 @@ class Helper():
 
 def main():
     h = Helper()
-    # h.get_in_pair()
-    h.data_into_x_splits(x=15)
+    # h.get_in_pair() # this generates the "in_pair.csv"
+    h.data_into_x_splits(x=21) # this splits in_pair.csv into sub files for multi tasking.
     
 
 
