@@ -227,7 +227,8 @@ class TDX_retriever():
         try:
             resp = requests.get(cur_url, headers=self._get_data_header())
         except:
-            print("Really gets here!?")
+            # 真的會跑進來這裡
+            # 現在猜想應該是每天有上限之類，感覺是20萬筆左右
             time.sleep(1)
             resp = requests.get(cur_url, headers=self._get_data_header())
 
