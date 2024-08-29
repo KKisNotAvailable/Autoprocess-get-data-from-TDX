@@ -14,6 +14,7 @@ from tqdm import tqdm
 from datetime import date, timedelta, datetime
 import time
 
+
 class BadResponse(Exception):
     '''
     Bad response when retrieving
@@ -29,6 +30,7 @@ class BadResponse(Exception):
     Since I tested on some points reported to trigger 404, 
     and that point actually worked, so not sure why 404 occured.
     '''
+
     def __init__(self, message) -> None:
         self.message = message
         super(BadResponse, self).__init__(message)
@@ -36,12 +38,12 @@ class BadResponse(Exception):
 
 class TDX_retriever():
     def __init__(
-            self, 
-            app_id, app_key,
-            add_villcode: bool = False,
-            auth_url="https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
-            url="https://tdx.transportdata.tw/api/maas/routing?"
-        ):
+        self,
+        app_id, app_key,
+        add_villcode: bool = False,
+        auth_url="https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
+        url="https://tdx.transportdata.tw/api/maas/routing?"
+    ):
         self.__app_id = app_id
         self.__app_key = app_key
         self.__add_villcode = add_villcode
@@ -70,7 +72,7 @@ class TDX_retriever():
     @property
     def get_log(self):
         return self.__log
-    
+
     def write_log(self, log_path: str = "./log", additional_naming: str = ""):
         '''
         Currently, writes log when response not 200 occurs and end of the program
@@ -87,24 +89,25 @@ class TDX_retriever():
         content_type = 'application/x-www-form-urlencoded'
         grant_type = 'client_credentials'
 
-        return{
-            'content-type' : content_type,
-            'grant_type' : grant_type,
-            'client_id' : self.__app_id,
-            'client_secret' : self.__app_key
+        return {
+            'content-type': content_type,
+            'grant_type': grant_type,
+            'client_id': self.__app_id,
+            'client_secret': self.__app_key
         }
 
     def _get_data_header(self) -> dict:
         auth_JSON = json.loads(self._auth_response.text)
         access_token = auth_JSON.get('access_token')
 
-        return{
+        return {
             'authorization': 'Bearer ' + access_token,
             'Accept-Encoding': 'gzip'
         }
-    
+
     def _authenticate(self) -> None:
-        self._auth_response = requests.post(self.auth_url, self.__get_auth_header())
+        self._auth_response = requests.post(
+            self.auth_url, self.__get_auth_header())
 
     def _conds_to_str(self, conds: dict) -> str:
         '''
@@ -136,11 +139,11 @@ class TDX_retriever():
         return "&".join(cond_l)
 
     def _set_condition(
-            self,
-            target_weekday: int = 3,
-            target_time: str = "T10:00:00",
-            is_depart: bool = True
-        ) -> None:
+        self,
+        target_weekday: int = 3,
+        target_time: str = "T10:00:00",
+        is_depart: bool = True
+    ) -> None:
         '''
         Can set conditions manually or would set to default.
         1. "origin" and "destination" are not settable.
@@ -171,25 +174,26 @@ class TDX_retriever():
         ----------
         coord_from: list
         coord_to: list
-        
+
         Return
         ------
         dict
             the dictionary of conditions.
         '''
-        days_to_add = [7,1,2,3,4,5,6]
+        days_to_add = [7, 1, 2, 3, 4, 5, 6]
         weekday_diff = target_weekday - date.today().isoweekday()
-        next_target = (date.today() + timedelta(days=days_to_add[weekday_diff])).strftime("%Y-%m-%d")
-    
+        next_target = (
+            date.today() + timedelta(days=days_to_add[weekday_diff])).strftime("%Y-%m-%d")
+
         timing_mode = "depart" if is_depart else "arrival"
-        
+
         self.__conds = {
             "origin": self.coord_from,
             "destination": self.coord_to,
             "gc": 1.0,
             "top": 1,
-            "transit": [3,4,5,6,7,8,9],
-            "transfer_time": [0,60],
+            "transit": [3, 4, 5, 6, 7, 8, 9],
+            "transfer_time": [0, 60],
             timing_mode: next_target + target_time,
             "first_mile_mode": 0,
             "first_mile_time": 30,
@@ -213,7 +217,7 @@ class TDX_retriever():
         # to make sure there's conditions available
         if not self.__conds:
             self._set_condition()
-            
+
         self._update_coords(coord_from, coord_to)
 
         cur_url = self.url + self._conds_to_str(self.__conds)
@@ -233,7 +237,7 @@ class TDX_retriever():
             resp = requests.get(cur_url, headers=self._get_data_header())
 
         return resp
-    
+
     def get_transport_result(self, coord_from: list, coord_to: list) -> list:
         '''
         Will return back and forth results from the given two coords.
@@ -244,7 +248,7 @@ class TDX_retriever():
             looks like [24, 121].
         coord_to: list.
             looks like [24, 121].
-        
+
         Return
         ------
             [
@@ -278,7 +282,7 @@ class TDX_retriever():
                 time.sleep(0.5)
                 resp = get_resp()
                 # raise BadResponse("API rate limit exceeded")
-            
+
             tmp_log = (
                 f"({self.__cur_i}, {self.__cur_j})" +
                 str(resp) + " " +
@@ -289,18 +293,20 @@ class TDX_retriever():
                 self.__log += tmp_log
                 # sleep for 1 sec, authenticate again, then get response again
                 time.sleep(15)
-                self._authenticate() # would generate new access token
+                self._authenticate()  # would generate new access token
                 resp = get_resp()
                 # 有error是出現在288行，代表是要重新拿過token，但不知怎地新token是empty
                 # 先把sleep時間拉長不知道有沒有用
 
                 self.write_log()
                 # raise BadResponse(tmp_log)
-            
+
             try:
                 df = pd.DataFrame(resp.json()['data']['routes'][0])
-                transport_mode = [d['transport']['mode'] for d in df['sections']]
-                mode_duration = [d['travelSummary']['duration'] for d in df['sections']]
+                transport_mode = [d['transport']['mode']
+                                  for d in df['sections']]
+                mode_duration = [d['travelSummary']['duration']
+                                 for d in df['sections']]
 
                 cur_row.extend([
                     df['travel_time'].iloc[0], df['transfers'].iloc[0],
@@ -310,7 +316,7 @@ class TDX_retriever():
                 # response is 200 but empty result returned (location pair is too close for public transport)
                 self.__log += tmp_log
                 cur_row.extend([np.nan, np.nan, []])
-                
+
         return cur_row
 
     def get_pairwise_unpaired(self, coord_list: pd.DataFrame) -> pd.DataFrame:
@@ -337,11 +343,12 @@ class TDX_retriever():
         for i in tqdm(range(n)):
             A_villcode = coord_list['VILLCODE'].iloc[i]
             A_coord = [coord_list['lat'].iloc[i], coord_list['lon'].iloc[i]]
-            
+
             self.__cur_i = i
             for j in range(i+1, n):
                 B_villcode = coord_list['VILLCODE'].iloc[j]
-                B_coord = [coord_list['lat'].iloc[j], coord_list['lon'].iloc[j]]
+                B_coord = [coord_list['lat'].iloc[j],
+                           coord_list['lon'].iloc[j]]
                 self.__cur_j = j
 
                 new_row = []
@@ -352,7 +359,7 @@ class TDX_retriever():
                 self.__data.loc[len(self.__data)] = new_row
 
         return self.__data
-    
+
     def get_pairwise_paired(self, coord_list: pd.DataFrame) -> pd.DataFrame:
         '''
         This method gets the coords from a list of coords and pair them using loop
@@ -372,11 +379,13 @@ class TDX_retriever():
         n = coord_list.shape[0]
         for i in tqdm(range(n)):
             A_villcode = coord_list['A_VCODE'].iloc[i]
-            A_coord = [coord_list['A_lat'].iloc[i], coord_list['A_lon'].iloc[i]]
-            
+            A_coord = [coord_list['A_lat'].iloc[i],
+                       coord_list['A_lon'].iloc[i]]
+
             self.__cur_i = i
             B_villcode = coord_list['B_VCODE'].iloc[i]
-            B_coord = [coord_list['B_lat'].iloc[i], coord_list['B_lon'].iloc[i]]
+            B_coord = [coord_list['B_lat'].iloc[i],
+                       coord_list['B_lon'].iloc[i]]
 
             new_row = []
             if self.__add_villcode:
@@ -389,8 +398,8 @@ class TDX_retriever():
 
 
 def test_single(TDX: TDX_retriever):
-    c1 = [24.9788580602204,121.55598430669878]
-    c2 = [25.001153300303976,121.5042516466285]
+    c1 = [24.9788580602204, 121.55598430669878]
+    c2 = [25.001153300303976, 121.5042516466285]
 
 # 63000080031,121.55598430669878,24.9788580602204
 # 63000080032,121.56397728822249,24.981549180333282
@@ -398,7 +407,6 @@ def test_single(TDX: TDX_retriever):
 
 # 65000030010,121.5042516466285,25.001153300303976
 # 65000030007,121.49481580385896,25.000770213112368
-
 
     cols = [
         'A_lat', 'A_lon', 'B_lat', 'B_lon',
@@ -411,16 +419,17 @@ def test_single(TDX: TDX_retriever):
     # print(df)
     df.to_csv('output/single_pt_demo.csv', index=False)
 
+
 def get_multi(
-        TDX: TDX_retriever, 
-        centroids: pd.DataFrame, 
-        time_symb: str, time_format: str,
-        batch_num: str = None,
-        test_size: int = 0,
-        out_path: str = "./output/"
-    ):
+    TDX: TDX_retriever,
+    centroids: pd.DataFrame,
+    time_symb: str, time_format: str,
+    batch_num: str = None,
+    test_size: int = 0,
+    out_path: str = "./output/"
+):
     print(f"Start Processing Centroids with depart time at {time_symb}...")
-    
+
     # shorter for testing
     if test_size > 0:
         centroids = centroids.iloc[:test_size]
@@ -436,7 +445,7 @@ def get_multi(
     # get result from paired centroids.
     else:
         df = TDX.get_pairwise_paired(centroids)
-    
+
     out_name = f'{out_path}multi_pt_demo_{time_symb}'
     if batch_num:
         out_name += f"_{batch_num}"
@@ -451,12 +460,12 @@ def main():
     if len(sys.argv) <= 1:
         print("Please provide a file path to the api key info.")
         return
-    
+
     api_filepath = sys.argv[1]
     if ".json" not in api_filepath:
         print("Should provide a api key file in json.")
         return
-    
+
     with open(api_filepath) as f:
         ps_info = json.load(f)
     app_id = ps_info['app_id']
@@ -476,16 +485,16 @@ def main():
     # ===================================================
     # Get single point DEMO: using get_transport_result()
     # ===================================================
-    # TDX = TDX_retriever(app_id, app_key)
-    # TDX._auth_tester()
-    # test_single(TDX)
+    TDX = TDX_retriever(app_id, app_key)
+    test_single(TDX)
+    return
 
     # ===================================================
     # Get pairwise from CSV
     # ===================================================
     path = "./JJinTP_data_TW/Routing/"
     # filename = "village_centroid_TP.csv" # unpaired data
-    filename = f"in_pairs_sub{batch_num}.csv" # paired data
+    filename = f"in_pairs_sub{batch_num}.csv"  # paired data
     centroids = pd.read_csv(path+filename)
 
     time_table = {
@@ -496,11 +505,10 @@ def main():
         TDX = TDX_retriever(app_id, app_key)
         # TDX._auth_tester()
         get_multi(
-            TDX, centroids, k, t, 
+            TDX, centroids, k, t,
             batch_num=batch_num, test_size=0, out_path=out_path
         )
 
 
 if __name__ == "__main__":
     main()
-    
