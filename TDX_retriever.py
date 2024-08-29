@@ -14,6 +14,10 @@ from tqdm import tqdm
 from datetime import date, timedelta, datetime
 import time
 
+# TODO:
+# 1. change the way writing to log.
+# 2. when single testing, should also be able to use self.__data to store result.
+
 
 class BadResponse(Exception):
     '''
@@ -63,8 +67,8 @@ class TDX_retriever():
             tmp_cols.extend(['A_villcode', 'B_villcode'])
         tmp_cols.extend([
             'A_lat', 'A_lon', 'B_lat', 'B_lon',
-            'AB_travel_time', 'AB_transfer_cnt', 'AB_route',
-            'BA_travel_time', 'BA_transfer_cnt', 'BA_route'
+            'AB_travel_time', 'AB_ttl_cost', 'AB_transfer_cnt', 'AB_route',
+            'BA_travel_time', 'BA_ttl_cost', 'BA_transfer_cnt', 'BA_route'
         ])
 
         self.__data = pd.DataFrame(columns=tmp_cols)
@@ -238,7 +242,7 @@ class TDX_retriever():
 
         return resp
 
-    def get_transport_result(self, coord_from: list, coord_to: list) -> list:
+    def get_transport_result(self, coord_from: list, coord_to: list, get_demo=False) -> list:
         '''
         Will return back and forth results from the given two coords.
 
@@ -302,6 +306,13 @@ class TDX_retriever():
                 # raise BadResponse(tmp_log)
 
             try:
+                if get_demo:
+                    with open(f'output/result_example.json', 'w', encoding='utf-8-sig') as fp:
+                        json.dump(
+                            resp.json(), fp,
+                            sort_keys=False, ensure_ascii=False,
+                            indent=4, separators=(',', ': ')
+                        )
                 df = pd.DataFrame(resp.json()['data']['routes'][0])
                 transport_mode = [d['transport']['mode']
                                   for d in df['sections']]
@@ -309,13 +320,15 @@ class TDX_retriever():
                                  for d in df['sections']]
 
                 cur_row.extend([
-                    df['travel_time'].iloc[0], df['transfers'].iloc[0],
+                    df['travel_time'].iloc[0],
+                    df['total_price'].iloc[0],
+                    df['transfers'].iloc[0],
                     [[m, t] for m, t in zip(transport_mode, mode_duration)]
                 ])
             except:
                 # response is 200 but empty result returned (location pair is too close for public transport)
                 self.__log += tmp_log
-                cur_row.extend([np.nan, np.nan, []])
+                cur_row.extend([np.nan, np.nan, np.nan, []])
 
         return cur_row
 
@@ -410,11 +423,11 @@ def test_single(TDX: TDX_retriever):
 
     cols = [
         'A_lat', 'A_lon', 'B_lat', 'B_lon',
-        'AB_travel_time', 'AB_transfer_cnt', 'AB_route',
-        'BA_travel_time', 'BA_transfer_cnt', 'BA_route'
+        'AB_travel_time', 'AB_ttl_cost', 'AB_transfer_cnt', 'AB_route',
+        'BA_travel_time', 'BA_ttl_cost', 'BA_transfer_cnt', 'BA_route'
     ]
     df = pd.DataFrame(columns=cols)
-    df.loc[len(df)] = TDX.get_transport_result(c1, c2)
+    df.loc[len(df)] = TDX.get_transport_result(c1, c2, get_demo=True)
 
     # print(df)
     df.to_csv('output/single_pt_demo.csv', index=False)
