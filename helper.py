@@ -91,21 +91,23 @@ class Helper():
             cur_head += gap
         return
     
-    def task_generator(self, sub_task_cnt: int = 3):
+    def task_generator(self, file_list: list = [1], keys: int = 1):
         '''
         This method generates the task file in vscode, so we don't 
         need to manually open several terminals and type the commands.
         '''
-        keys = 3
+        sub_task_cnt = len(file_list)
         batch_size = sub_task_cnt // keys
 
-        activate_venv = "env/Scripts/Activate.ps1" # for powershell
+        # Actually, here we only need to set the vscode interpretor to
+        # the env, then can run without a line of script to activate.
+        # activate_venv = "env/Scripts/Activate.ps1" # for powershell
 
         tasks = [
             {
-                "label": f"get TDX with key {n // batch_size + 1} on file {n+1}",
+                "label": f"get TDX with key {n // batch_size + 1} on file {file_list[n]}",
                 "type": "shell",
-                "command": f"env\\run_py_key{n // batch_size + 1}.bat {n+1}"
+                "command": f"env\\run_py_key{n // batch_size + 1}.bat {file_list[n]}"
             }
             for n in range(sub_task_cnt)
         ]
@@ -136,12 +138,13 @@ class Helper():
 
 def main():
     h = Helper()
-    sub_file_cnt = 21
+    sub_file_cnt = 36
     # h.get_in_pair() # this generates the "in_pair.csv"
     h.data_into_x_splits(x=sub_file_cnt) # this splits in_pair.csv into sub files for multi tasking.
     
-    # h2 = Helper("./.vscode/")
-    # h2.task_generator(sub_file_cnt)
+    file_list = list(range(1,5))
+    h2 = Helper("./.vscode/")
+    h2.task_generator(file_list=file_list, keys=1)
 
 
 if __name__ == "__main__":
