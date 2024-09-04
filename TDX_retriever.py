@@ -498,9 +498,8 @@ def main():
     # ===================================================
     # Get single point DEMO: using get_transport_result()
     # ===================================================
-    TDX = TDX_retriever(app_id, app_key)
-    test_single(TDX)
-    return
+    # TDX = TDX_retriever(app_id, app_key)
+    # test_single(TDX)
 
     # ===================================================
     # Get pairwise from CSV
