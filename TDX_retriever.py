@@ -44,6 +44,7 @@ class TDX_retriever():
     def __init__(
         self,
         app_id, app_key,
+        log_path: str = "./log/",
         add_villcode: bool = False,
         auth_url="https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
         url="https://tdx.transportdata.tw/api/maas/routing?"
@@ -60,7 +61,11 @@ class TDX_retriever():
         self.__conds = None
         self.__cur_i = -1
         self.__cur_j = -1
-        self.__log = ""
+        self.__log_path = log_path
+        self.__log_file = ""
+
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
 
         tmp_cols = []
         if self.__add_villcode:
@@ -73,21 +78,21 @@ class TDX_retriever():
 
         self.__data = pd.DataFrame(columns=tmp_cols)
 
-    @property
-    def get_log(self):
-        return self.__log
+    def set_log_name(self, log_name: str):
+        self.__log_file = self.__log_path + log_name
+        if not os.path.exists(self.__log_file):
+            with open(self.__log_file, 'w') as f:
+                pass  # Just create an empty file
 
-    def write_log(self, log_path: str = "./log", additional_naming: str = ""):
+    def write_log(self, message):
         '''
         Currently, writes log when response not 200 occurs and end of the program
         Both would write all the no data case and all the bad responses (some coord pair might overlap)
+        
+        index of the coords starts with 0, 1, 2, ...
         '''
-        dt_dtr = datetime.now().strftime("%Y%m%d-%H%M")
-        log_filename = f"{log_path}/{dt_dtr}_{additional_naming}log.txt"
-        if not os.path.exists(log_path):
-            os.makedirs(log_path)
-        with open(log_filename, "w") as txt_file:
-            txt_file.write(self.__log)
+        with open(self.__log_file, 'a') as f:
+            f.write(f"{message}\n")
 
     def __get_auth_header(self) -> dict:
         content_type = 'application/x-www-form-urlencoded'
@@ -187,7 +192,8 @@ class TDX_retriever():
         days_to_add = [7, 1, 2, 3, 4, 5, 6]
         weekday_diff = target_weekday - date.today().isoweekday()
         next_target = (
-            date.today() + timedelta(days=days_to_add[weekday_diff])).strftime("%Y-%m-%d")
+            date.today() + timedelta(days=days_to_add[weekday_diff])
+        ).strftime("%Y-%m-%d")
 
         timing_mode = "depart" if is_depart else "arrival"
 
@@ -205,6 +211,14 @@ class TDX_retriever():
             "last_mile_time": 30
         }
         return
+    
+    def cond_output(self):
+        with open(f'output/condition.json', 'w', encoding='utf-8-sig') as fp:
+            json.dump(
+                self.__conds, fp,
+                sort_keys=False, ensure_ascii=False,
+                indent=4, separators=(',', ': ')
+            )
 
     def _update_coords(self, coord_from: list, coord_to: list):
         self.__conds['origin'] = self.coord_from = coord_from
@@ -236,7 +250,7 @@ class TDX_retriever():
             resp = requests.get(cur_url, headers=self._get_data_header())
         except:
             # 真的會跑進來這裡
-            # 現在猜想應該是每天有上限之類，感覺是20萬筆左右
+            self.write_log(f"!!!({self.__cur_i}, {self.__cur_j})")
             time.sleep(1)
             resp = requests.get(cur_url, headers=self._get_data_header())
 
@@ -261,11 +275,6 @@ class TDX_retriever():
                 B2A_time_spent, B2A_transfer_times, [B2A_modes and mode_time_spent]
             ]
         '''
-        # resps = [
-        #     self._get_data_response(coord_from, coord_to),
-        #     self._get_data_response(coord_to, coord_from)
-        # ]
-
         pairs = [
             [coord_from, coord_to],
             [coord_to, coord_from]
@@ -273,62 +282,73 @@ class TDX_retriever():
 
         cur_row = [*coord_from, *coord_to]
 
-        def get_resp():
-            return self._get_data_response(p[0], p[1])
+        def get_resp(p0):
+            return self._get_data_response(p0[0], p0[1])
 
         for p in pairs:
-            resp = get_resp()
+            resp = get_resp(p)
             # --------------
             # Error Handling
             # --------------
             # 429 and 401 (when invalid token) would not return a 'result' key.
-            while "429" in str(resp):
-                time.sleep(0.5)
-                resp = get_resp()
-                # raise BadResponse("API rate limit exceeded")
+            # while "429" in str(resp):
+            #     time.sleep(0.5)
+            #     resp = get_resp(p)
+            #     # raise BadResponse("API rate limit exceeded")
 
             tmp_log = (
                 f"({self.__cur_i}, {self.__cur_j})" +
-                str(resp) + " " +
-                resp.text + "\n"
+                str(resp) + " " + resp.text
             )
 
-            while "200" not in str(resp):
-                self.__log += tmp_log
-                # sleep for 1 sec, authenticate again, then get response again
-                time.sleep(15)
-                self._authenticate()  # would generate new access token
-                resp = get_resp()
-                # 有error是出現在288行，代表是要重新拿過token，但不知怎地新token是empty
-                # 先把sleep時間拉長不知道有沒有用
+            # while "200" not in str(resp):
+            #     # sleep for 1 sec, authenticate again, then get response again
+            #     time.sleep(15)
+            #     self._authenticate()  # would generate new access token
+            #     resp = get_resp(p)
+            #     # 有error是出現在288行，代表是要重新拿過token，但不知怎地新token是empty
+            #     # 先把sleep時間拉長不知道有沒有用
 
-                self.write_log()
-                # raise BadResponse(tmp_log)
+            #     self.write_log(tmp_log)
+            #     # raise BadResponse(tmp_log)
 
-            try:
-                if get_demo:
-                    with open(f'output/result_example.json', 'w', encoding='utf-8-sig') as fp:
-                        json.dump(
-                            resp.json(), fp,
-                            sort_keys=False, ensure_ascii=False,
-                            indent=4, separators=(',', ': ')
-                        )
-                df = pd.DataFrame(resp.json()['data']['routes'][0])
-                transport_mode = [d['transport']['mode']
-                                  for d in df['sections']]
-                mode_duration = [d['travelSummary']['duration']
-                                 for d in df['sections']]
+            if "200" not in str(resp): # ignore and make record
+                self.write_log(">>"+tmp_log)
+                continue # skip current pair
 
-                cur_row.extend([
-                    df['travel_time'].iloc[0],
-                    df['total_price'].iloc[0],
-                    df['transfers'].iloc[0],
-                    [[m, t] for m, t in zip(transport_mode, mode_duration)]
-                ])
-            except:
-                # response is 200 but empty result returned (location pair is too close for public transport)
-                self.__log += tmp_log
+            # ------------------------------------------
+            # the following is dealing with response 200
+            # ------------------------------------------
+            if not resp.json()['data']['routes']: # response is 200 but empty result
+                self.write_log(tmp_log)
                 cur_row.extend([np.nan, np.nan, np.nan, []])
+                continue
+
+            if get_demo:
+                with open(f'output/result_example.json', 'w', encoding='utf-8-sig') as fp:
+                    json.dump(
+                        resp.json(), fp,
+                        sort_keys=False, ensure_ascii=False,
+                        indent=4, separators=(',', ': ')
+                    )
+
+            df = pd.DataFrame(resp.json()['data']['routes'][0])
+            transport_mode = [
+                d['transport']['mode'] for d in df['sections']
+            ]
+            mode_duration = [
+                d['travelSummary']['duration'] for d in df['sections']
+            ]
+
+            # if price does not exist, set it to 0
+            price = df['total_price'].iloc[0] if 'total_price' in df.keys() else 0
+
+            cur_row.extend([
+                df['travel_time'].iloc[0],
+                price,
+                df['transfers'].iloc[0],
+                [[m, t] for m, t in zip(transport_mode, mode_duration)]
+            ])
 
         return cur_row
 
@@ -414,6 +434,10 @@ def test_single(TDX: TDX_retriever):
     c1 = [24.9788580602204, 121.55598430669878]
     c2 = [25.001153300303976, 121.5042516466285]
 
+    c1 = [24.9788580602204, 121.55598430669878]
+    c2 = [24.92583789587648, 121.34128216256848]
+
+
 # 63000080031,121.55598430669878,24.9788580602204
 # 63000080032,121.56397728822249,24.981549180333282
 # 63000080041,121.55628472119042,24.98197093297431
@@ -429,6 +453,8 @@ def test_single(TDX: TDX_retriever):
     df = pd.DataFrame(columns=cols)
     df.loc[len(df)] = TDX.get_transport_result(c1, c2, get_demo=True)
 
+    # TDX.cond_output()
+
     # print(df)
     df.to_csv('output/single_pt_demo.csv', index=False)
 
@@ -442,6 +468,11 @@ def get_multi(
     out_path: str = "./output/"
 ):
     print(f"Start Processing Centroids with depart time at {time_symb}...")
+
+    dt_dtr = datetime.now().strftime("%Y%m%d")
+    TDX.set_log_name(
+        log_name=f"{dt_dtr}_{time_symb}_{batch_num}.log"
+    )
 
     # shorter for testing
     if test_size > 0:
@@ -459,14 +490,11 @@ def get_multi(
     else:
         df = TDX.get_pairwise_paired(centroids)
 
-    out_name = f'{out_path}multi_pt_demo_{time_symb}'
+    out_name = f'{out_path}travel_at_{time_symb}'
     if batch_num:
         out_name += f"_{batch_num}"
 
     df.to_csv(out_name+'.csv', index=False)
-
-    # Getting log: points that has no public transport time
-    TDX.write_log(log_path="./log", additional_naming=f"{time_symb}_")
 
 
 def main():
@@ -488,11 +516,6 @@ def main():
     if not os.path.isdir(out_path):
         os.mkdir(out_path)
 
-    # key_ver = 0
-    # for s in api_filepath:
-    #     if s.isnumeric():
-    #         key_ver = int(s)
-
     batch_num = sys.argv[2]
 
     # ===================================================
@@ -500,6 +523,7 @@ def main():
     # ===================================================
     # TDX = TDX_retriever(app_id, app_key)
     # test_single(TDX)
+    # return
 
     # ===================================================
     # Get pairwise from CSV
@@ -510,11 +534,11 @@ def main():
     centroids = pd.read_csv(path+filename)
 
     time_table = {
-        "10am": "T10:00:00",
+        # "10am": "T10:00:00",
         "6pm": "T18:00:00"
     }
     for k, t in time_table.items():
-        TDX = TDX_retriever(app_id, app_key)
+        TDX = TDX_retriever(app_id, app_key, add_villcode=True)
         # TDX._auth_tester()
         get_multi(
             TDX, centroids, k, t,
