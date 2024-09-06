@@ -176,7 +176,7 @@ class TDX_retriever():
                         earlier or later.
             first_mile_mode: 0 | transportation method for the first mile, (0:走路,1:腳踏車,2:開車,3:共享單車)
             first_mile_time: 30 | first mile time tolerance, max=60
-            last_mile_mode: 0 | transportation method for the lsat mile, (0:走路,1:腳踏車,2:開車,3:共享單車)
+            last_mile_mode: 0 | transportation method for the last mile, (0:走路,1:腳踏車,2:開車,3:共享單車)
             last_mile_time: 30 | last mile time tolerance, max=60
 
         Parameters
