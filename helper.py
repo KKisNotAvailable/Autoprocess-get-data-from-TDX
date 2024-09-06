@@ -138,13 +138,26 @@ class Helper():
 
 def main():
     h = Helper()
-    sub_file_cnt = 40
     # h.get_in_pair() # this generates the "in_pair.csv"
-    h.data_into_x_splits(x=sub_file_cnt) # this splits in_pair.csv into sub files for multi tasking.
     
-    file_list = list(range(1,3))
-    h2 = Helper("./.vscode/")
-    h2.task_generator(file_list=file_list, keys=1)
+    remake_sub = input("Do you wish to remake subfiles?(Y/N)")
+    if remake_sub.lower() == 'y':
+        sub_file_cnt = input("Sub files to generate: ")
+        if sub_file_cnt.isnumeric():
+            sub_file_cnt = int(sub_file_cnt)
+        else:
+            raise ValueError("Please provide a valid value.")
+        h.data_into_x_splits(x=sub_file_cnt) # this splits in_pair.csv into sub files for multi tasking.
+    
+    remake_task = input("Do you wish to remake task?(Y/N)")
+    if remake_task.lower() == 'y':
+        start = int(input("Serial number of file to start: "))
+        n = int(input("Number of files wish to process: "))
+        file_list = list(range(start,start+n))
+        h2 = Helper("./.vscode/")
+        h2.task_generator(file_list=file_list, keys=1)
+    else:
+        print("Program ending...")
 
 
 if __name__ == "__main__":
