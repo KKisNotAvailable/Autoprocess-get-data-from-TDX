@@ -314,6 +314,7 @@ class TDX_retriever():
 
             if "200" not in str(resp): # ignore and make record
                 self.write_log(">>"+tmp_log)
+                cur_row.extend([np.nan, np.nan, np.nan, []])
                 continue # skip current pair
 
             # ------------------------------------------
@@ -322,7 +323,7 @@ class TDX_retriever():
             if not resp.json()['data']['routes']: # response is 200 but empty result
                 self.write_log(tmp_log)
                 cur_row.extend([np.nan, np.nan, np.nan, []])
-                continue
+                continue # skip current pair
 
             if get_demo:
                 with open(f'output/result_example.json', 'w', encoding='utf-8-sig') as fp:
