@@ -1,0 +1,28 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "get TDX with key 1 on file 6",
+            "type": "shell",
+            "command": "env\\run_py_key1.bat 6"
+        },
+        {
+            "label": "get TDX with key 1 on file 7",
+            "type": "shell",
+            "command": "env\\run_py_key1.bat 7"
+        },
+        {
+            "label": "run all",
+            "dependsOn": [
+                "get TDX with key 1 on file 6",
+                "get TDX with key 1 on file 7"
+            ],
+            "dependsOrder": "parallel",
+            "presentation": {
+                "reveal": "always",
+                "revealProblems": "onProblem",
+                "panel": "new"
+            }
+        }
+    ]
+}
