@@ -40,6 +40,15 @@ class BadResponse(Exception):
         super(BadResponse, self).__init__(message)
 
 
+class MockResponse:
+    def __init__(self, status_code, text):
+        self.status_code = status_code
+        self.text = text
+
+    def __str__(self):
+        return f"<Response [{self.status_code}]>"
+
+
 class TDX_retriever():
     def __init__(
         self,
@@ -250,9 +259,10 @@ class TDX_retriever():
             resp = requests.get(cur_url, headers=self._get_data_header())
         except:
             # 真的會跑進來這裡
-            self.write_log(f"!!!({self.__cur_i}, {self.__cur_j})")
-            time.sleep(1)
-            resp = requests.get(cur_url, headers=self._get_data_header())
+            resp = MockResponse(600, "No idea what happened...")
+            # self.write_log(f"!!!({self.__cur_i}, {self.__cur_j})")
+            # time.sleep(1)
+            # resp = requests.get(cur_url, headers=self._get_data_header())
 
         return resp
 
