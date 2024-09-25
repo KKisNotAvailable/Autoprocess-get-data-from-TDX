@@ -545,8 +545,8 @@ def main():
     centroids = pd.read_csv(path+filename)
 
     time_table = {
-        # "10am": "T10:00:00",
-        "6pm": "T18:00:00"
+        "10am": "T10:00:00"
+        # "6pm": "T18:00:00"
     }
     for k, t in time_table.items():
         TDX = TDX_retriever(app_id, app_key, add_villcode=True)
