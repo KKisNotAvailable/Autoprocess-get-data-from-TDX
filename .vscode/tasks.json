@@ -2,20 +2,20 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "get TDX with key 1 on file 1",
+            "label": "get TDX with key 1 on file 3",
             "type": "shell",
-            "command": "env\\run_py_key1.bat 1"
+            "command": "env\\run_py_key1.bat 3"
         },
         {
-            "label": "get TDX with key 1 on file 2",
+            "label": "get TDX with key 1 on file 4",
             "type": "shell",
-            "command": "env\\run_py_key1.bat 2"
+            "command": "env\\run_py_key1.bat 4"
         },
         {
             "label": "run all",
             "dependsOn": [
-                "get TDX with key 1 on file 1",
-                "get TDX with key 1 on file 2"
+                "get TDX with key 1 on file 3",
+                "get TDX with key 1 on file 4"
             ],
             "dependsOrder": "parallel",
             "presentation": {
