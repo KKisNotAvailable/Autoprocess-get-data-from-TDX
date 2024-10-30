@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import pandas as pd
 import json
 import threading
 import time
@@ -218,45 +219,81 @@ class request_test():
 
         return requests.get(cur_url, headers=self._get_data_header())
 
-def main():
-    c1 = [24.9788580602204,121.55598430669878]
-    c2 = [24.981549180333282,121.56397728822249]
 
-    # cond = conds_to_str(set_conds(c1, c2))
-
+def t_request(c1, c2):
     with open('env/api_key1.json') as f:
         keys = json.load(f)
 
     print(keys)
-
-    # print(cond)
 
     tester = request_test(keys['app_id'], keys['app_key'])
     resp = tester.data_resp(c1, c2)
     print(resp.text)
     # print(resp.json())
 
-    # -----------------
-    # test multi thread
-    # -----------------
-    # def print_numbers():
-    #     for i in range(5):
-    #         time.sleep(1)
-    #         print(f"Thread {threading.current_thread().name}: {i}")
 
-    # # Create two threads
-    # thread1 = threading.Thread(target=print_numbers, name="Thread 1")
-    # thread2 = threading.Thread(target=print_numbers, name="Thread 2")
+def t_multi_threads():
+    def print_numbers():
+        for i in range(5):
+            time.sleep(1)
+            print(f"Thread {threading.current_thread().name}: {i}")
 
-    # # Start the threads
-    # thread1.start()
-    # thread2.start()
+    # Create two threads
+    thread1 = threading.Thread(target=print_numbers, name="Thread 1")
+    thread2 = threading.Thread(target=print_numbers, name="Thread 2")
 
-    # # Wait for both threads to complete
-    # thread1.join()
-    # thread2.join()
+    # Start the threads
+    thread1.start()
+    thread2.start()
 
-    # print("Both threads have finished execution.")
+    # Wait for both threads to complete
+    thread1.join()
+    thread2.join()
+
+    print("Both threads have finished execution.")
+
+
+def t_back_to_mat():
+    data = {
+        'A': ['Point1', 'Point1', 'Point2'],
+        'B': ['Point2', 'Point3', 'Point3'],
+        'AB_time': [10, 15, 12],
+        'BA_time': [8, 14, 13]
+    }
+    df = pd.DataFrame(data)
+
+    # Create a pivot table for AB_time from A to B
+    ab_matrix = df.pivot_table(index='A', columns='B', values='AB_time', fill_value=0)
+    
+
+    # If you also want to include BA_time as a symmetric entry
+    ba_matrix = df.pivot_table(index='B', columns='A', values='BA_time', fill_value=0)
+    # Reindex both matrices to make sure they have the same structure
+    all_points = sorted(set(df['A']).union(df['B']))
+    ab_matrix = ab_matrix.reindex(index=all_points, columns=all_points, fill_value=0)
+    ba_matrix = ba_matrix.reindex(index=all_points, columns=all_points, fill_value=0)
+
+    print(ab_matrix)
+    print(ba_matrix)
+
+    # Combine matrices by taking the maximum of each element (or mean/any other rule you prefer)
+    combined_matrix = ab_matrix + ba_matrix
+
+    print(combined_matrix)
+
+
+def main():
+    c1 = [24.9788580602204,121.55598430669878]
+    c2 = [24.981549180333282,121.56397728822249]
+
+    # =====================
+    #  T_set_TDX_condition
+    # =====================
+    # cond = conds_to_str(set_conds(c1, c2))
+    # print(cond)
+
+    t_back_to_mat()
+
     
 if __name__ == '__main__':
     main()
