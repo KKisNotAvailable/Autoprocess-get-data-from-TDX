@@ -577,43 +577,55 @@ class Helper():
             survey_files.append(cur_file)
 
         survey_df = pd.concat(survey_files, ignore_index=True)
+        # but here we can replace empty strings with 0's is because there are no 0's in this dataset
+        survey_df = survey_df.astype(str).map(lambda x: x.strip())\
+            .replace('', '0').astype(int)
 
-        # check na in each column
-        check = survey_df.isna().sum()
-        print(f"NaN check:\n{check}")
+        # check na or 0 in each column
+        check = survey_df.apply(lambda x: x.isna() | (x == 0))
+        check = check.sum()
+        print(f"NaN and 0 (empty string) check:\n{check}")
 
         # 2. get the town code used in travel cost "TOWNCODE"
+        # right join to keep only the filtered districts (since town_code_TP was filtered above)
         survey_df = survey_df.merge(
-            town_code_TP, left_on='Residence', right_on='code', how='left'
+            town_code_TP, left_on='Residence', right_on='code', how='right'
         )
+
+        # TODO: also filter the destination?
+        # 需要跟老師確認，住範圍但通勤到範圍外的要留嗎
+        # 另外也要確認我們最終要用的是以居住地來看的mode percentage
+        # 還是居住-通勤pair的 mode percentage (這個每個pair筆數一定會很少)
 
         # 3. count the occurance of mode/coarse_mode/public_private across years
         #    all sample
         #    group by TOWNCODE
-        # TODO: if in Daily_transport is empty, set it to 98
         survey_df['Daily_transport'] = survey_df['Daily_transport'].fillna(98)
 
         survey_df = survey_df.merge(
             mode_codes, left_on='Daily_transport', right_on='code', how='left'
         )
-        current_mode = 'coarse_mode'  # CHANGE THIS FOR DIFFERENT MODE
-        # 3-1
-        counts = survey_df[current_mode]\
-            .value_counts().reset_index(name='cnt')
-        counts['pct'] = (counts['cnt'] / counts['cnt'].sum()) * 100
-        counts['pct'] = counts['pct'].round(1)
+        modes_to_check = ['mode', 'coarse_mode', 'public_private']
+        for current_mode in modes_to_check:
+            print(f"Current mode is: {current_mode}")
+            # 3-1
+            counts = survey_df[current_mode]\
+                .value_counts().reset_index(name='cnt')
+            counts['pct'] = (counts['cnt'] / counts['cnt'].sum()) * 100
+            counts['pct'] = counts['pct'].round(1)
 
-        print(counts)
-        # 3-2
-        counts = survey_df.groupby('TOWNCODE')[current_mode]\
-            .value_counts().reset_index(name='cnt')
-        counts['pct'] = (counts['cnt'] / counts.groupby('TOWNCODE')['cnt']
-                         .transform('sum')) * 100
-        counts['pct'] = counts['pct'].round(1)
-        print(counts)
+            print(counts)
+            # print(sum(counts['cnt']), sum(counts['pct']))
+            # 3-2
+            counts = survey_df.groupby('TOWNCODE')[current_mode]\
+                .value_counts().reset_index(name='cnt')
+            counts['pct'] = (counts['cnt'] / counts.groupby('TOWNCODE')['cnt']
+                            .transform('sum')) * 100
+            counts['pct'] = counts['pct'].round(1)
+            # print(counts)
 
-        # (opt.) group by TOWNCODE, count the occurance of codes in Transportation_1-10
-        # 但感覺sander是用這個方法捏，98年也才25000筆資料，他的count可以超過這個數量
+            # (opt.) group by TOWNCODE, count the occurance of codes in Transportation_1-10
+            # 但這個方法就是很難定義分母 (不可能是sample size，也許是用all non-na count)
 
 
 def TDX_helper():
