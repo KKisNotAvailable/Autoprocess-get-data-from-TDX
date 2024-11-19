@@ -191,6 +191,49 @@ class Helper():
         df.to_csv(out_file, index=False)
         return
 
+    def public_data_check(self, filename, calib_info: pd.DataFrame):
+        # since both set and list are not hashable, turn the sorted list into string
+        data = pd.read_csv(f"{DATA_PATH}public_data/{filename}")
+        data = data[['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']]
+        data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(data['A_villcode'], data['B_villcode'])]
+
+        walk_data = pd.read_csv(f"{DATA_PATH}public_data/travel_walking.csv")
+        walk_data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(walk_data['id_orig'], walk_data['id_dest'])]
+        walk_data = walk_data[['point_set', 'duration']]
+
+        calib_info['name_ch'] = [t + v for t, v in zip(calib_info['TOWNNAME'], calib_info['VILLNAME'])]
+        calib_info = calib_info[['VILLCODE', 'name_ch']]
+
+        # print(data.head(5))
+
+        # 1. Preserve the valid VILLCODE (but when merging village to township, this can be ignored, there's a step doing this)
+        keep_villcodes = calib_info['VILLCODE']
+        data = data[data['A_villcode'].isin(keep_villcodes)]
+        data = data[data['B_villcode'].isin(keep_villcodes)]
+
+        # get the chinese names
+        data = data.merge(
+            calib_info.rename(columns={'VILLCODE': 'A_villcode', 'name_ch': 'name_A'}), 
+            on='A_villcode', how='left'
+        )
+        data = data.merge(
+            calib_info.rename(columns={'VILLCODE': 'B_villcode', 'name_ch': 'name_B'}), 
+            on='B_villcode', how='left'
+        )
+
+        # 2. merge with walking data, filter out the walk time <= 30 min (1800 sec)
+        data = data.merge(walk_data, on='point_set', how='left')
+        data = data[data['duration'] > 1800]
+
+        # check AB_travel_time and BA_travel_time still empty
+        check = data[(data['AB_travel_time'].isna()) | (data['BA_travel_time'].isna())]
+        check = check[[
+            'A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time', 
+            'name_A', 'name_B', 'duration'
+        ]].rename(columns={'duration': 'walking_time'})
+        # print(check)
+        # check.to_csv(OUT_PATH+"public_problem_pairs.csv", index=False)
+
     def __flawed_village_to_township(self, mode: str, calib_info: pd.DataFrame, to_file: bool = True):
         '''
         This function is to merge the village-wise travel times to township-wise
@@ -401,10 +444,25 @@ class Helper():
             raise ValueError("receive only either 'public' or 'private'.")
         print(f"Currently working on {mode}!")
 
-        # Filter the villages
+        # Filter the villages (bot origin and destination)
         keep_villcodes = calib_info['VILLCODE']
         folded_pair = folded_pair[folded_pair[a_col].isin(keep_villcodes)]
         folded_pair = folded_pair[folded_pair[b_col].isin(keep_villcodes)]
+
+        # public need special treatment
+        if mode == 'public':
+            # if both AB and BA time are empty, set them to 3000,
+            # if one of them have value, use that value.
+            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(folded_pair[ba_time_col])
+            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(folded_pair[ab_time_col])
+
+            fake_time = 3000
+            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(fake_time)
+            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(fake_time)
+
+            print(folded_pair[[a_col, b_col, ab_time_col, ba_time_col]])
+
+            return
 
         # ===================================
         #  Start merging village to township
@@ -412,10 +470,14 @@ class Helper():
         # NOTE: since computing Township level using the original table would
         #       be easier, we don't need matrix now
         # 1. get the weights for each villcode by population
+        #    VILLCODE: cccttttttvvv (city, township, village)
+        #    weight for origin: population; weight for destination: employment
         calib_info['township'] = calib_info['VILLCODE'].astype("str").str[:-3]
-        calib_info['weight'] = calib_info['population'] / \
+        calib_info['weight_A'] = calib_info['population'] / \
             calib_info.groupby('township')['population'].transform('sum')
-        weights = calib_info[['VILLCODE', 'weight']]
+        calib_info['weight_B'] = calib_info['employment'] / \
+            calib_info.groupby('township')['employment'].transform('sum')
+        weights = calib_info[['VILLCODE', 'weight_A', 'weight_B']]
 
         # 2. Concate A to B and B to A into a long data with columns:
         #    vill_a, vill_b, time
@@ -436,7 +498,7 @@ class Helper():
 
         # 3. AB_time x weights mapped to A
         merged_df = all_pair.merge(
-            weights.rename(columns={'weight': 'weight_A'}),
+            weights[['VILLCODE', 'weight_A']],
             left_on='vill_a', right_on='VILLCODE', how='left'
         )
         merged_df['weighted_t_A'] = merged_df['time'] * merged_df['weight_A']
@@ -452,7 +514,7 @@ class Helper():
                 ['town_b', 'vill_b'], as_index=False)['weighted_t_A'].sum()
             # 4-2
             by_villb_df = by_villb_df.merge(
-                weights.rename(columns={'weight': 'weight_B'}),
+                weights[['VILLCODE', 'weight_B']],
                 left_on='vill_b', right_on='VILLCODE', how='left'
             )
             by_villb_df['weighted_t_B'] = by_villb_df['weighted_t_A'] * \
@@ -483,6 +545,8 @@ class Helper():
 
         # TODO: now what? use matrix to do things?
 
+        print(town_travel_times)
+
         return
         if to_file:
             df.to_csv()
@@ -500,7 +564,7 @@ class Helper():
         town_code = town_code.iloc[191:, :2]
         town_code.columns = ['code', 'town']
 
-        # drop if code ends with 00, meaning the city. eg. 100  @@新北市(臺北縣)
+        # Drop if code ends with 00, meaning the city. eg. 100  @@新北市(臺北縣)
         town_code = town_code[~town_code['code'].str.endswith('00')]
         # keep code in range of New Taipei: 100~199 and Taipei: 2200~2299
         town_code['code'] = town_code['code'].astype(int)  # Convert to int
@@ -508,7 +572,7 @@ class Helper():
         cond_tp = town_code['code'].between(2200, 2299)
         town_code = town_code[cond_ntp | cond_tp]
 
-        # Base the townships needed on the calibration data
+        # Base the townships needed on the Calibration data
         town_code_TP = pd.read_csv(f"{DATA_PATH}calibration_data_TP.csv")
         town_code_TP['TOWNCODE'] = town_code_TP['VILLCODE']\
             .astype("str").str[:-3]
@@ -518,7 +582,7 @@ class Helper():
         town_code_TP = town_code_TP.merge(
             town_code, left_on='TOWNNAME', right_on='town', how='left')
 
-        # rearrange columns
+        # Rearrange columns
         # NOTE: 'TOWNCODE' is for travel cost, 'code' is for survey data
         town_code_TP = town_code_TP[['TOWNCODE', 'code', 'TOWNNAME']]
 
@@ -565,11 +629,10 @@ class Helper():
 
         for y in years:
             file_path = f"{DATA_PATH}survey_data/{y}年民眾日常使用運具狀況調查原始資料.csv"
-            cur_file = pd.read_csv(file_path)
+            cur_file = pd.read_csv(file_path, usecols=col_name_map.keys())
 
             # 1. for each file, keep only the columns above, make a year column
             #    and then stack them up
-            cur_file = cur_file[col_name_map.keys()]
             cur_file.rename(columns=col_name_map, inplace=True)
 
             cur_file['year'] = y + 1911
@@ -577,55 +640,92 @@ class Helper():
             survey_files.append(cur_file)
 
         survey_df = pd.concat(survey_files, ignore_index=True)
-        # but here we can replace empty strings with 0's is because there are no 0's in this dataset
+        # here we replace empty strings with 0's, since there are no code as 0
         survey_df = survey_df.astype(str).map(lambda x: x.strip())\
             .replace('', '0').astype(int)
+        # NOTE: all the data in survey_df are int64, 'code' from town_code_TP is also int64
 
         # check na or 0 in each column
-        check = survey_df.apply(lambda x: x.isna() | (x == 0))
-        check = check.sum()
-        print(f"NaN and 0 (empty string) check:\n{check}")
+        # check = survey_df.apply(lambda x: x.isna() | (x == 0))
+        # check = check.sum()
+        # print(f"NaN and 0 (empty string) check:\n{check}")
 
-        # 2. get the town code used in travel cost "TOWNCODE"
-        # right join to keep only the filtered districts (since town_code_TP was filtered above)
+        # 2. get the "TOWNCODE" used in travel cost
+        #    right join to keep only the filtered districts (since town_code_TP was filtered)
         survey_df = survey_df.merge(
-            town_code_TP, left_on='Residence', right_on='code', how='right'
+            town_code_TP.rename(columns={"TOWNCODE": 'TOWNCODE_orig', "TOWNNAME": 'TOWNNAME_orig'}), 
+            left_on='Residence', right_on='code', how='right'
         )
 
-        # TODO: also filter the destination?
-        # 需要跟老師確認，住範圍但通勤到範圍外的要留嗎
-        # 另外也要確認我們最終要用的是以居住地來看的mode percentage
-        # 還是居住-通勤pair的 mode percentage (這個每個pair筆數一定會很少)
+        # Dest: need only one of work and school to be in Taipei Metropolitan
+        survey_df['Dest'] = np.where(
+            survey_df['Workplace'].isin(town_code_TP['code']), survey_df['Workplace'],
+            np.where(
+                survey_df['School'].isin(town_code_TP['code']), survey_df['School'],
+                0
+            )
+        )
 
-        # 3. count the occurance of mode/coarse_mode/public_private across years
-        #    all sample
-        #    group by TOWNCODE
+        # Drop if there are no destination
+        survey_df = survey_df[survey_df['Dest'] != 0]
+
+        # Make sure destination fall in Taipei Metropolitan
+        survey_df = survey_df.merge(
+            town_code_TP.rename(columns={"TOWNCODE": 'TOWNCODE_dest', "TOWNNAME": 'TOWNNAME_dest'}), 
+            left_on='Dest', right_on='code', how='right'
+        )
+
+        # Specify the columns
+        survey_df = survey_df[[
+            'Age', 'Gender', 'TOWNCODE_orig', 'TOWNNAME_orig',
+            'TOWNCODE_dest', 'TOWNNAME_dest', 'Daily_transport'
+        ]]
+
+        # 下面這個可以看到只有 7534 筆是跨區移動 (total應該是13280筆)
+        # tmp = survey_df[survey_df['TOWNNAME_orig'] != survey_df['TOWNNAME_dest']]
+        # print(tmp[['TOWNNAME_orig', 'TOWNNAME_dest']])
+
+        # 3. Get the grouped transportation code
         survey_df['Daily_transport'] = survey_df['Daily_transport'].fillna(98)
 
         survey_df = survey_df.merge(
             mode_codes, left_on='Daily_transport', right_on='code', how='left'
         )
+
+        # ====================
+        #  Check distribution
+        # ====================
         modes_to_check = ['mode', 'coarse_mode', 'public_private']
         for current_mode in modes_to_check:
             print(f"Current mode is: {current_mode}")
-            # 3-1
+            # 3-1 overall mode distribution
             counts = survey_df[current_mode]\
                 .value_counts().reset_index(name='cnt')
             counts['pct'] = (counts['cnt'] / counts['cnt'].sum()) * 100
             counts['pct'] = counts['pct'].round(1)
-
+            print(">> Overall distribution")
             print(counts)
-            # print(sum(counts['cnt']), sum(counts['pct']))
-            # 3-2
-            counts = survey_df.groupby('TOWNCODE')[current_mode]\
-                .value_counts().reset_index(name='cnt')
-            counts['pct'] = (counts['cnt'] / counts.groupby('TOWNCODE')['cnt']
-                            .transform('sum')) * 100
-            counts['pct'] = counts['pct'].round(1)
+            print(sum(counts['cnt']), sum(counts['pct']))
+
+            # 3-2 based on origin, get mode distribution
+            # counts = survey_df.groupby('TOWNCODE_orig')[current_mode]\
+            #     .value_counts().reset_index(name='cnt')
+            # counts['pct'] = (counts['cnt'] / counts.groupby('TOWNCODE_orig')['cnt']
+            #                 .transform('sum')) * 100
+            # counts['pct'] = counts['pct'].round(1)
             # print(counts)
 
-            # (opt.) group by TOWNCODE, count the occurance of codes in Transportation_1-10
-            # 但這個方法就是很難定義分母 (不可能是sample size，也許是用all non-na count)
+        # ==========================
+        #  Get the travle pair data
+        # ==========================
+        # expected columns: 'TOWNCODE_orig', 'TOWNNAME_orig', 'TOWNCODE_dest', 'TOWNNAME_dest', 'mode', 'pct'
+        #  Notice: 1. the 'mode' here should be just private and public
+        #          2. if there are < 1 count of sum of counts of private and public, then drop this pair.
+
+
+
+        # (another option) group by TOWNCODE, count the occurance of codes in Transportation_1-10
+        # 但這個方法就是很難定義分母 (不可能是sample size，也許是用all non-na count)
 
 
 def TDX_helper():
@@ -663,13 +763,19 @@ def travel_cost_helper():
     # ============================================================
     #  Combine the Village Level Transportation to Township Level
     # ============================================================
-    # calibration columns: VILLCODE,COUNTYNAME,TOWNNAME,VILLNAME,area,num_est,employment,avg_wage,num_est_ls,employment_ls,total_revenue_ls,total_value_added_ls,avg_employment_ls,population,floorspace,floorspace_R,floorspace_C,avg_price_R,avg_price_C,pop_den,employ_den
+    # Columns: VILLCODE,COUNTYNAME,TOWNNAME,VILLNAME,area,num_est,employment,
+    #     avg_wage,num_est_ls,employment_ls,total_revenue_ls,
+    #     total_value_added_ls,avg_employment_ls,population,floorspace,
+    #     floorspace_R,floorspace_C,avg_price_R,avg_price_C,pop_den,employ_den
     calib = pd.read_csv(f"{DATA_PATH}calibration_data_TP.csv")  # 1247
-    calib = calib[['VILLCODE', 'area', 'employment', 'population']]
+    calib = calib[['VILLCODE', 'area', 'employment', 'population', 'TOWNNAME', 'VILLNAME']]
 
     # 先用private做測試
-    # h.village_to_township(mode='public', calib_info=calib)
-    h.village_to_township(mode='private', calib_info=calib)
+    h.village_to_township(mode='public', calib_info=calib)
+    # h.village_to_township(mode='private', calib_info=calib)
+
+    # public data examination
+    # h.public_data_check(filename="merged_public.csv", calib_info=calib)
 
 
 def main():
@@ -678,12 +784,12 @@ def main():
     # =============
     h = Helper()
     years = list(range(98, 106))  # ROC 98 ~ 105
-    h.process_survey(years=years)
+    # h.process_survey(years=years)
 
     # =============
     #  Travel Cost
     # =============
-    # travel_cost_helper()
+    travel_cost_helper()
 
 
 if __name__ == "__main__":
