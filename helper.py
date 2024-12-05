@@ -1,7 +1,7 @@
 import pandas as pd
 from tqdm import tqdm
 from ast import literal_eval
-from collections import defaultdict
+from collections import defaultdict, Counter
 import numpy as np
 import json
 import os
@@ -11,8 +11,12 @@ OUT_PATH = "output/"
 DATA_PATH = "JJinTP_data_TW/"
 LOG_PATH = "log/"
 
+FILE_CALIB = "JJinTP_data_TW/calibration_data_TP.csv"
+FILE_VILL_CENTROID = "JJinTP_data_TW/Routing/village_centroid_TP.csv"
 
-class Helper():
+
+class Helper_tdx():
+    # TODO: need to change where the batch files destination path.
     def __init__(self, destination: str = "./JJinTP_data_TW/Routing/") -> None:
         self.path = destination
 
@@ -156,42 +160,40 @@ class Helper():
                 sort_keys=False, indent=4, separators=(',', ': ')
             )
 
-    # ABOVE FUNCTIONS ARE MAINLY FOR GETTING DATA FROM TDX
-    ######################################################
 
-    def merge_public_files(self, start_time: str = "6pm", file_cnt: int = 20):
+class Helper_public_travel():
+    def __init__(self, out_path=OUT_PATH, calib_path='', centroid_path='') -> None:
+        self.__out_path = out_path
+
+        calib = pd.read_csv(calib_path)  # 1247
+        calib = calib[['VILLCODE', 'area', 'employment', 'population', 'TOWNNAME', 'VILLNAME']]
+        self.__calib = calib
+
+        # VILLCODE,lon,lat
+        centroids = pd.read_csv(centroid_path)
+        self.__centroids = centroids
+
+    def _public_data_check(self, filename):
         '''
-        This function will merge the series of files from 1 to 'file_cnt'
-        with the stated 'start_time'
-
-        columns: A_villcode,B_villcode,A_lat,A_lon,B_lat,B_lon,AB_travel_time,
-                 AB_ttl_cost,AB_transfer_cnt,AB_route,BA_travel_time,BA_ttl_cost,
-                 BA_transfer_cnt,BA_route
+        Mainly generates to files for centroid validity check: 
+        1. public_problem_pairs: for checking and later extract pairs to get public 
+                                 travel time again
+        2. problem_vills_list: renamed to problem_vills after I've done the centroid review
 
         Parameters
         ----------
-        start_time: str
-            This is the departure time for public transportation, 
-            only 6pm and 10am available.
-        file_cnt: int
-            The number of files needed to be merged.
+        filename: str.
+            the merged public data file
+        calib_info: pd.DataFrame.
+            the calibration data contains filtered list of villages, we need the 
+            VILLCODE and the village's chinese name for manual checking
+
+        Return
+        ------
+            None
         '''
-        out_file = f"{OUT_PATH}merged_public_{start_time}.csv"
+        calib_info = self.__calib
 
-        if os.path.exists(out_file):
-            print(
-                f'The file already exists in {OUT_PATH}, skipping this step...')
-            return
-
-        file_paths = [
-            f"{OUT_PATH}travel_at_{start_time}_{s}.csv" for s in range(1, file_cnt+1)]
-
-        # Load, concatenate, and save as a single file
-        df = pd.concat([pd.read_csv(f) for f in file_paths])
-        df.to_csv(out_file, index=False)
-        return
-
-    def public_data_check(self, filename, calib_info: pd.DataFrame):
         # since both set and list are not hashable, turn the sorted list into string
         data = pd.read_csv(f"{DATA_PATH}public_data/{filename}")
         data = data[['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']]
@@ -231,8 +233,204 @@ class Helper():
             'A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time', 
             'name_A', 'name_B', 'duration'
         ]].rename(columns={'duration': 'walking_time'})
+
         # print(check)
         # check.to_csv(OUT_PATH+"public_problem_pairs.csv", index=False)
+
+        # Get the count of the village occurance and output as file for
+        # manual recording
+        code_cnt = Counter(list(check['A_villcode']) + list(check['B_villcode']))
+        vill_cnt = Counter(list(check['name_A']) + list(check['name_B']))
+        v_col, c_col, cnt_col = [], [], []
+        for k, v in vill_cnt.most_common():
+                v_col.append(k)
+                cnt_col.append(v)
+        for k, v in code_cnt.most_common():
+                c_col.append(k)
+
+        problem_vills = pd.DataFrame({
+            'VILLCODE': c_col,
+            'NAME': v_col,
+            'CNT': cnt_col
+        })
+
+        problem_vills['OPERATION'] = ""
+        problem_vills['NOTE'] = ""
+        # problem_vills was based on problem_vills_list. I manully checked
+        # the centroids on map and record the operations.
+        # The renewed cnetroids are in another file.
+        # problem_vills.to_csv(OUT_PATH+"problem_vills_list.csv", index=False)
+        
+    def _check_centroid_changed_cnt(self):
+        '''
+        After manully checking with google maps, centroids of some of 
+        the villages were re-assigned. Thus, this function is to check
+        if the recorded changed villages is the same amount as the centroid.
+        '''
+        # from the problem.vill.csv => get '重訂座標'
+        record_df = pd.read_csv(OUT_PATH+'problem_vills.csv')
+        print(sum(record_df['OPERATION'] == '重訂座標'))
+
+        # from village_centroid_TP.csv => get the shorter lon lat
+        centroids_df = pd.read_csv(f'{DATA_PATH}Routing/village_centroid_TP.csv', dtype={'lon': 'str'})
+        print(sum(centroids_df['lon'].map(len) < 12))
+
+        # Both are 57
+
+    def merge_public_files(
+            self, source_path, out_path="", 
+            start_time="6pm", file_cnt=20
+        ):
+        '''
+        This function will merge the series of files from 1 to 'file_cnt'
+        with the stated 'start_time'
+
+        columns: A_villcode,B_villcode,A_lat,A_lon,B_lat,B_lon,AB_travel_time,
+                 AB_ttl_cost,AB_transfer_cnt,AB_route,BA_travel_time,BA_ttl_cost,
+                 BA_transfer_cnt,BA_route
+
+        Parameters
+        ----------
+        start_time: str
+            This is the departure time for public transportation, 
+            only 6pm and 10am available.
+        file_cnt: int
+            The number of files needed to be merged.
+        '''
+        if not out_path: out_path = self.__out_path
+
+        out_file = f"{out_path}merged_public_{start_time}.csv"
+
+        if os.path.exists(out_file):
+            print(
+                f'The file already exists in {out_path}, skipping this step...')
+            return
+
+        file_paths = [
+            f"{source_path}travel_at_{start_time}_{s}.csv" for s in range(1, file_cnt+1)]
+
+        # Load, concatenate, and save as a single file
+        df = pd.concat([pd.read_csv(f) for f in file_paths])
+        df.to_csv(out_file, index=False)
+        return
+
+    def get_recentered_list(self, problem_vills_fpath, out_fpath):
+        '''
+        In the problem_vills file, OPERATION is used to recognize the 
+        recentered villages. This function will directly generates file
+        as the out_fpath.
+
+        Parameters
+        ----------
+        problem_vills_file: str.
+            the file path + name to locate the problem_vills.csv
+        
+        Return
+        ------
+            None.
+        '''
+        data = pd.read_csv(problem_vills_fpath)
+
+        data = data[data['OPERATION'] == '重訂座標'].reset_index(drop=True)
+        data['VILLCODE'].to_csv(out_fpath, index=False)
+
+    def get_rerun_pairs(
+            self, problem_vills_fpath, problem_pairs_fpath, recentered_fpath, 
+            out_fpath, include_recenter=True
+        ):
+        '''
+        This function generates the pairs for TDX to rerun from the 
+        public_problem_pairs.csv
+
+        Parameters
+        ----------
+        recentered_fpath: str.
+            the file path + name to locate the recentered_list.csv
+        include_recenter: bool.
+            to decide whether to include the pairs including recentered 
+            points. If False then only the non-recentered pairs in the 
+            public_problem_pairs.csv would be rerun.
+            
+        Return
+        ------
+            None.
+        '''
+        # A_villcode,B_villcode,AB_travel_time,BA_travel_time,name_A,name_B,walking_time
+        rerun_pairs = pd.read_csv(problem_pairs_fpath)
+
+        if not os.path.exists(recentered_fpath):  # generates the file
+            self.get_recentered_list(
+                problem_vills_fpath=problem_vills_fpath,
+                out_fpath=recentered_fpath
+            )
+        
+        recenter_list = pd.read_csv(recentered_fpath, dtype='str')
+        recenter_list = recenter_list['VILLCODE'].tolist()
+        
+        # 1. filter the pairs including recentered villages out
+        have_recenter = (rerun_pairs['A_villcode'].isin(recenter_list)) |\
+                        (rerun_pairs['B_villcode'].isin(recenter_list))
+        rerun_pairs = rerun_pairs[~have_recenter]
+
+        # was thinking only rerun the pairs with both back and forth are empty
+        both_nan = (rerun_pairs['AB_travel_time'].isna()) &\
+                   (rerun_pairs['BA_travel_time'].isna())
+        
+        code_cols = ['A_villcode', 'B_villcode']
+        rerun_pairs = rerun_pairs[code_cols]
+
+        if include_recenter:
+            # 2. pair the recentered villages to all others
+            complete_vills = self.__calib['VILLCODE'].astype(str)
+            non_re_vills = complete_vills[~complete_vills.isin(recenter_list)]
+
+            # 2-1. Get the full matrix of re x non-re pairs
+            re_non_pairs = [
+                [f"[{x}, {y}]" for y in non_re_vills]
+                for x in recenter_list
+            ]
+            # turn into 2darray for matrix operation
+            re_non_pairs = np.array(re_non_pairs)  # 57 x 1190
+
+            rnp_df = pd.DataFrame(
+                data=list(map(literal_eval, re_non_pairs.flatten())),
+                columns=code_cols
+            )
+
+            # 2-2. Get only the upper triangle of re x re pairs
+            re_re_pairs = [
+                [f"[{x}, {y}]" for y in recenter_list]
+                for x in recenter_list
+            ]
+            re_re_pairs = np.array(re_re_pairs)  # 57 x 57
+            # no need for flatten, the following operation gives a 1d array size = (57^2 - 57) / 2
+            above_diagonal = re_re_pairs[np.triu_indices_from(re_re_pairs, k=1)]
+
+            rrp_df = pd.DataFrame(
+                data=list(map(literal_eval, above_diagonal)),
+                columns=code_cols
+            )
+
+            # 2-3. Concat with the rerun pairs
+            rerun_pairs = pd.concat([rerun_pairs, rnp_df, rrp_df]).reset_index(drop=True)
+
+        # 3. Get the lon lat
+        for x in ['A', 'B']:
+            tmp = self.__centroids.rename(columns={
+                orig_name: f'{x}_' + orig_name.lower() 
+                for orig_name in self.__centroids.columns
+            })
+            rerun_pairs = rerun_pairs.merge(tmp, on=f'{x}_villcode', how='left')
+
+        # A_villcode,B_villcode,A_lon,A_lat,B_lon,B_lat
+        rerun_pairs.to_csv(out_fpath, index=False)
+
+        return
+
+
+class Helper_travel_cost():
+    def __init__(self, destination: str = "./JJinTP_data_TW/Routing/") -> None:
+        self.path = destination
 
     def __flawed_village_to_township(self, mode: str, calib_info: pd.DataFrame, to_file: bool = True):
         '''
@@ -729,7 +927,7 @@ class Helper():
 
 
 def TDX_helper():
-    h = Helper()
+    h = Helper_tdx()
     # h.get_in_pair() # this generates the "in_pair.csv"
 
     remake_sub = input("Do you wish to remake subfiles?(Y/N)")
@@ -747,18 +945,20 @@ def TDX_helper():
         start = int(input("Serial number of file to start: "))
         n = int(input("Number of files wish to process: "))
         file_list = list(range(start, start+n))
-        h2 = Helper("./.vscode/")
+        h2 = Helper_tdx("./.vscode/")
         h2.task_generator(file_list=file_list, keys=1)
     else:
         print("Program ending...")
 
 
 def travel_cost_helper():
-    h = Helper()
+    htc = Helper_travel_cost()
+    hpt = Helper_public_travel()
     # =============================
     #  Merge Public Transport Data
     # =============================
-    # h.merge_public_files(calib['VILLCODE']) # this generates merged_public_{time}.csv
+    # TODO: is this correct way to run this function??
+    # hpt.merge_public_files(source_path="output/public_things") # this generates merged_public_{time}.csv
 
     # ============================================================
     #  Combine the Village Level Transportation to Township Level
@@ -771,25 +971,40 @@ def travel_cost_helper():
     calib = calib[['VILLCODE', 'area', 'employment', 'population', 'TOWNNAME', 'VILLNAME']]
 
     # 先用private做測試
-    h.village_to_township(mode='public', calib_info=calib)
-    # h.village_to_township(mode='private', calib_info=calib)
+    # htc.village_to_township(mode='public', calib_info=calib)
+    # htc.village_to_township(mode='private', calib_info=calib)
 
-    # public data examination
-    # h.public_data_check(filename="merged_public.csv", calib_info=calib)
-
-
+    
 def main():
     # =============
     #  Survey Data
     # =============
-    h = Helper()
+    htc = Helper_travel_cost()
     years = list(range(98, 106))  # ROC 98 ~ 105
-    # h.process_survey(years=years)
+    # htc.process_survey(years=years)
 
     # =============
     #  Travel Cost
     # =============
-    travel_cost_helper()
+    # travel_cost_helper()
+
+    # =============
+    #  Public Data
+    # =============
+    hpt = Helper_public_travel(
+        calib_path=FILE_CALIB,
+        centroid_path=FILE_VILL_CENTROID
+    )
+    # Public data examination
+    # hpt._public_data_check(filename="merged_public.csv")
+    
+    hpt.get_rerun_pairs(
+        problem_vills_fpath=f'{OUT_PATH}problem_vills.csv',
+        problem_pairs_fpath=f'{OUT_PATH}public_problem_pairs.csv',
+        recentered_fpath=f'{OUT_PATH}recentered_list.csv',
+        include_recenter=True,
+        out_fpath=f'{OUT_PATH}rerun_pairs.csv'
+    )
 
 
 if __name__ == "__main__":
