@@ -422,12 +422,12 @@ class TDX_retriever():
         '''
         n = coord_list.shape[0]
         for i in tqdm(range(n)):
-            A_villcode = coord_list['A_village'].iloc[i]
+            A_villcode = coord_list['A_villcode'].iloc[i]
             A_coord = [coord_list['A_lat'].iloc[i],
                        coord_list['A_lon'].iloc[i]]
 
             self.__cur_i = i
-            B_villcode = coord_list['B_village'].iloc[i]
+            B_villcode = coord_list['B_villcode'].iloc[i]
             B_coord = [coord_list['B_lat'].iloc[i],
                        coord_list['B_lon'].iloc[i]]
 
