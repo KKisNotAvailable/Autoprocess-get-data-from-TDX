@@ -94,14 +94,14 @@ class Helper_tdx():
 
         df.to_csv(self.path+outfile, index=False)
         return
-
-    def data_into_x_splits(self, infile: str = "in_pairs.csv", x: int = 3):
+    
+    def data_into_x_splits(self, x: int, file_path: str, infile: str):
         '''
         Split the paired data into sub files, since the TDX server does not support
         accessing more than 200,000 times a day, and there are about 800,000 rows 
         in our paired list, each row will trigger 2 times of access to the server.
         '''
-        df = pd.read_csv(self.path+infile)
+        df = pd.read_csv(file_path+infile)
         n = df.shape[0]
         gap = n // x + 1
         cur_head = 0
@@ -109,7 +109,7 @@ class Helper_tdx():
         for i in range(x):
             tmp_df = df.iloc[cur_head:cur_head+gap]
 
-            tmp_df.to_csv(f"{self.path}in_pairs_sub{i+1}.csv", index=False)
+            tmp_df.to_csv(f"{file_path}{infile}_sub{i+1}.csv", index=False)
             print(f"Sub{i+1} created.")
 
             cur_head += gap
