@@ -1,9 +1,8 @@
 import pandas as pd
 import TDX_retriever as tr
 import argparse
-import os
 import json
-from datetime import date, timedelta, datetime
+from datetime import datetime
 
 def main():
     parser = argparse.ArgumentParser(
@@ -23,6 +22,7 @@ def main():
     parser.add_argument("--out_path", type=str, default=DATA_PATH, help=f"Output file path (default: {DATA_PATH}.")
     parser.add_argument("--depart_time", type=str, default="T10:00:00", help=f"Departure time (default: 'T10:00:00'.")
     parser.add_argument("--batch_num", type=int, default=-1, help=f"Batch number for pair files (default: -1.")
+    parser.add_argument("--test", type=int, default=-1, help=f"Set the size of subset for test (default: -1, meaning not testing")
 
 
     args = parser.parse_args()
@@ -44,7 +44,7 @@ def main():
     # -------------
     #  For testing
     # -------------
-    test_size = 0  # default 0, can adjust to some positive integer
+    test_size = args.test
 
     if test_size > 0:
         centroids = centroids.iloc[:test_size]
@@ -55,8 +55,9 @@ def main():
     batch_num = args.batch_num
     time_format = args.depart_time
     cur_hour = int(time_format[1:3])
-    ampm = 'am' if cur_hour < 12 else 'pm'  # TODO: will have problem if 24, but ignore for now
-    time_symb = f"{cur_hour % 12}{ampm}"
+    ampm = 'am' if cur_hour < 12 or cur_hour == 24 else 'pm'
+    hour = 0 if cur_hour == 24 else (cur_hour % 12 or 12)
+    time_symb = f"{hour}{ampm}"
 
     print(f"Start Processing Centroids with depart time at {time_symb}...")
 
@@ -67,9 +68,9 @@ def main():
     )
 
     TDX._set_condition(target_time=time_format)
-    # df = TDX.get_pairwise_paired(centroids)
+    df = TDX.get_pairwise_paired(centroids)
 
-    # df.to_csv(args.out_path + args.out_file, index=False)
+    df.to_csv(args.out_path + args.out_file, index=False)
 
 
 if __name__ == "__main__":
