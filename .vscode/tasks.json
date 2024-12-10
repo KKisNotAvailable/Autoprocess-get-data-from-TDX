@@ -7,9 +7,15 @@
             "command": "JJinTP_data_TW\\public_data\\tdx_api\\run_py_key1.bat"
         },
         {
+            "label": "get TDX with key 2",
+            "type": "shell",
+            "command": "JJinTP_data_TW\\public_data\\tdx_api\\run_py_key2.bat"
+        },
+        {
             "label": "run all",
             "dependsOn": [
-                "get TDX with key 1"
+                "get TDX with key 1",
+                "get TDX with key 2"
             ],
             "dependsOrder": "parallel",
             "presentation": {
