@@ -173,7 +173,7 @@ class Helper_public_travel():
         centroids = pd.read_csv(centroid_path)
         self.__centroids = centroids
 
-    def _public_data_check(self, filename):
+    def _public_data_check(self, fpath):
         '''
         Mainly generates to files for centroid validity check: 
         1. public_problem_pairs: for checking and later extract pairs to get public 
@@ -182,8 +182,8 @@ class Helper_public_travel():
 
         Parameters
         ----------
-        filename: str.
-            the merged public data file
+        fpath: str.
+            the public data file path.
         calib_info: pd.DataFrame.
             the calibration data contains filtered list of villages, we need the 
             VILLCODE and the village's chinese name for manual checking
@@ -195,7 +195,7 @@ class Helper_public_travel():
         calib_info = self.__calib
 
         # since both set and list are not hashable, turn the sorted list into string
-        data = pd.read_csv(f"{DATA_PATH}public_data/{filename}")
+        data = pd.read_csv(fpath)
         data = data[['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']]
         data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(data['A_villcode'], data['B_villcode'])]
 
@@ -208,7 +208,7 @@ class Helper_public_travel():
 
         # print(data.head(5))
 
-        # 1. Preserve the valid VILLCODE (but when merging village to township, this can be ignored, there's a step doing this)
+        # 1. Preserve the valid VILLCODE (could be ignored when merging village to township, there's a step doing this)
         keep_villcodes = calib_info['VILLCODE']
         data = data[data['A_villcode'].isin(keep_villcodes)]
         data = data[data['B_villcode'].isin(keep_villcodes)]
@@ -235,7 +235,7 @@ class Helper_public_travel():
         ]].rename(columns={'duration': 'walking_time'})
 
         # print(check)
-        # check.to_csv(OUT_PATH+"public_problem_pairs.csv", index=False)
+        # check.to_csv(OUT_PATH+"public_problem_pairs_rerun1.csv", index=False)
 
         # Get the count of the village occurance and output as file for
         # manual recording
@@ -336,7 +336,8 @@ class Helper_public_travel():
 
     def get_rerun_pairs(
             self, problem_vills_fpath, problem_pairs_fpath, recentered_fpath, 
-            out_fpath, include_recenter=True
+            out_fpath, include_recenter_pairs_in_rerun=True, 
+            exclude_recenter_pairs_in_probpair=True
         ):
         '''
         This function generates the pairs for TDX to rerun from the 
@@ -344,19 +345,29 @@ class Helper_public_travel():
 
         Parameters
         ----------
+        problem_vills_fpath: str.
+            the file of villages with records if they have been recentered.
+        problem_pairs_fpath: str.
+            the file of problem paris.
         recentered_fpath: str.
-            the file path + name to locate the recentered_list.csv
-        include_recenter: bool.
+            the file to locate the recentered_list.csv, generated from problem_vills_fpath
+        include_recenter_pairs_in_rerun: bool.
             to decide whether to include the pairs including recentered 
             points. If False then only the non-recentered pairs in the 
             public_problem_pairs.csv would be rerun.
+        exclude_recenter_pairs_in_probpair: bool.
+            to decide whether the pairs in the problem pairs including recentered 
+            points need to be excluded.
             
         Return
         ------
             None.
         '''
         # A_villcode,B_villcode,AB_travel_time,BA_travel_time,name_A,name_B,walking_time
-        rerun_pairs = pd.read_csv(problem_pairs_fpath)
+        rerun_pairs = pd.read_csv(
+            problem_pairs_fpath, 
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
 
         if not os.path.exists(recentered_fpath):  # generates the file
             self.get_recentered_list(
@@ -370,7 +381,8 @@ class Helper_public_travel():
         # 1. filter the pairs including recentered villages out
         have_recenter = (rerun_pairs['A_villcode'].isin(recenter_list)) |\
                         (rerun_pairs['B_villcode'].isin(recenter_list))
-        rerun_pairs = rerun_pairs[~have_recenter]
+        if exclude_recenter_pairs_in_probpair:
+            rerun_pairs = rerun_pairs[~have_recenter]
 
         # was thinking only rerun the pairs with both back and forth are empty
         both_nan = (rerun_pairs['AB_travel_time'].isna()) &\
@@ -379,7 +391,7 @@ class Helper_public_travel():
         code_cols = ['A_villcode', 'B_villcode']
         rerun_pairs = rerun_pairs[code_cols]
 
-        if include_recenter:
+        if include_recenter_pairs_in_rerun:
             # 2. pair the recentered villages to all others
             complete_vills = self.__calib['VILLCODE'].astype(str)
             non_re_vills = complete_vills[~complete_vills.isin(recenter_list)]
@@ -413,6 +425,9 @@ class Helper_public_travel():
 
             # 2-3. Concat with the rerun pairs
             rerun_pairs = pd.concat([rerun_pairs, rnp_df, rrp_df]).reset_index(drop=True)
+
+        rerun_pairs['A_villcode'] = rerun_pairs['A_villcode'].astype(int)
+        rerun_pairs['B_villcode'] = rerun_pairs['B_villcode'].astype(int)
 
         # 3. Get the lon lat
         for x in ['A', 'B']:
@@ -996,14 +1011,31 @@ def main():
         centroid_path=FILE_VILL_CENTROID
     )
     # Public data examination
-    # hpt._public_data_check(filename="merged_public.csv")
+    # hpt._public_data_check(fpath=f"{DATA_PATH}public_data/merged_public.csv")
+    # TODO: 
+    # 1. can set whether to generate problem pairs and problem village list
+    # 2. self define the generated file suffixes (or file name)
+    # 3. the merge public function want to be able to merge given set of files. (eg. my rerun results)
+    # hpt._public_data_check(fpath=f"{OUT_PATH}rerun_public_results_1.csv")
     
+    # this generates rerun pairs for recentered centroids
+    # hpt.get_rerun_pairs(
+    #     problem_vills_fpath=f'{OUT_PATH}problem_vills.csv',
+    #     problem_pairs_fpath=f'{OUT_PATH}public_problem_pairs.csv',
+    #     recentered_fpath=f'{OUT_PATH}recentered_list.csv',
+    #     include_recenter_pairs_in_rerun=True,
+    #     exclude_recenter_pairs_in_probpair=True,
+    #     out_fpath=f'{OUT_PATH}rerun_pairs.csv'
+    # )
+
+    # this generates rerun pairs for different departure time
     hpt.get_rerun_pairs(
         problem_vills_fpath=f'{OUT_PATH}problem_vills.csv',
-        problem_pairs_fpath=f'{OUT_PATH}public_problem_pairs.csv',
+        problem_pairs_fpath=f'{OUT_PATH}public_problem_pairs_rerun_empty.csv',
         recentered_fpath=f'{OUT_PATH}recentered_list.csv',
-        include_recenter=True,
-        out_fpath=f'{OUT_PATH}rerun_pairs.csv'
+        include_recenter_pairs_in_rerun=False,
+        exclude_recenter_pairs_in_probpair=False,
+        out_fpath=f'{OUT_PATH}rerun_pairs_v2.csv'
     )
 
 
