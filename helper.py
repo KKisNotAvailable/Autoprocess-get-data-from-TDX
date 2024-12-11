@@ -94,7 +94,7 @@ class Helper_tdx():
 
         df.to_csv(self.path+outfile, index=False)
         return
-    
+
     def data_into_x_splits(self, x: int, file_path: str, infile: str):
         '''
         Split the paired data into sub files, since the TDX server does not support
@@ -109,7 +109,8 @@ class Helper_tdx():
         for i in range(x):
             tmp_df = df.iloc[cur_head:cur_head+gap]
 
-            tmp_df.to_csv(f"{file_path}{infile}_sub{i+1}.csv", index=False)
+            tmp_df.to_csv(
+                f"{file_path}{infile.replace('.csv', '')}_sub{i+1}.csv", index=False)
             print(f"Sub{i+1} created.")
 
             cur_head += gap
@@ -166,7 +167,8 @@ class Helper_public_travel():
         self.__out_path = out_path
 
         calib = pd.read_csv(calib_path)  # 1247
-        calib = calib[['VILLCODE', 'area', 'employment', 'population', 'TOWNNAME', 'VILLNAME']]
+        calib = calib[['VILLCODE', 'area', 'employment',
+                       'population', 'TOWNNAME', 'VILLNAME']]
         self.__calib = calib
 
         # VILLCODE,lon,lat
@@ -200,10 +202,12 @@ class Helper_public_travel():
         data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(data['A_villcode'], data['B_villcode'])]
 
         walk_data = pd.read_csv(f"{DATA_PATH}public_data/travel_walking.csv")
-        walk_data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(walk_data['id_orig'], walk_data['id_dest'])]
+        walk_data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(
+            walk_data['id_orig'], walk_data['id_dest'])]
         walk_data = walk_data[['point_set', 'duration']]
 
-        calib_info['name_ch'] = [t + v for t, v in zip(calib_info['TOWNNAME'], calib_info['VILLNAME'])]
+        calib_info['name_ch'] = [t + v for t,
+                                 v in zip(calib_info['TOWNNAME'], calib_info['VILLNAME'])]
         calib_info = calib_info[['VILLCODE', 'name_ch']]
 
         # print(data.head(5))
@@ -215,11 +219,13 @@ class Helper_public_travel():
 
         # get the chinese names
         data = data.merge(
-            calib_info.rename(columns={'VILLCODE': 'A_villcode', 'name_ch': 'name_A'}), 
+            calib_info.rename(
+                columns={'VILLCODE': 'A_villcode', 'name_ch': 'name_A'}),
             on='A_villcode', how='left'
         )
         data = data.merge(
-            calib_info.rename(columns={'VILLCODE': 'B_villcode', 'name_ch': 'name_B'}), 
+            calib_info.rename(
+                columns={'VILLCODE': 'B_villcode', 'name_ch': 'name_B'}),
             on='B_villcode', how='left'
         )
 
@@ -228,9 +234,10 @@ class Helper_public_travel():
         data = data[data['duration'] > 1800]
 
         # check AB_travel_time and BA_travel_time still empty
-        check = data[(data['AB_travel_time'].isna()) | (data['BA_travel_time'].isna())]
+        check = data[(data['AB_travel_time'].isna()) |
+                     (data['BA_travel_time'].isna())]
         check = check[[
-            'A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time', 
+            'A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time',
             'name_A', 'name_B', 'duration'
         ]].rename(columns={'duration': 'walking_time'})
 
@@ -239,14 +246,15 @@ class Helper_public_travel():
 
         # Get the count of the village occurance and output as file for
         # manual recording
-        code_cnt = Counter(list(check['A_villcode']) + list(check['B_villcode']))
+        code_cnt = Counter(
+            list(check['A_villcode']) + list(check['B_villcode']))
         vill_cnt = Counter(list(check['name_A']) + list(check['name_B']))
         v_col, c_col, cnt_col = [], [], []
         for k, v in vill_cnt.most_common():
-                v_col.append(k)
-                cnt_col.append(v)
+            v_col.append(k)
+            cnt_col.append(v)
         for k, v in code_cnt.most_common():
-                c_col.append(k)
+            c_col.append(k)
 
         problem_vills = pd.DataFrame({
             'VILLCODE': c_col,
@@ -260,7 +268,7 @@ class Helper_public_travel():
         # the centroids on map and record the operations.
         # The renewed cnetroids are in another file.
         # problem_vills.to_csv(OUT_PATH+"problem_vills_list.csv", index=False)
-        
+
     def _check_centroid_changed_cnt(self):
         '''
         After manully checking with google maps, centroids of some of 
@@ -272,15 +280,16 @@ class Helper_public_travel():
         print(sum(record_df['OPERATION'] == '重訂座標'))
 
         # from village_centroid_TP.csv => get the shorter lon lat
-        centroids_df = pd.read_csv(f'{DATA_PATH}Routing/village_centroid_TP.csv', dtype={'lon': 'str'})
+        centroids_df = pd.read_csv(
+            f'{DATA_PATH}Routing/village_centroid_TP.csv', dtype={'lon': 'str'})
         print(sum(centroids_df['lon'].map(len) < 12))
 
         # Both are 57
 
     def merge_public_files(
-            self, source_path, out_path="", 
-            start_time="6pm", file_cnt=20
-        ):
+        self, source_path, out_path="",
+        start_time="6pm", file_cnt=20
+    ):
         '''
         This function will merge the series of files from 1 to 'file_cnt'
         with the stated 'start_time'
@@ -297,7 +306,8 @@ class Helper_public_travel():
         file_cnt: int
             The number of files needed to be merged.
         '''
-        if not out_path: out_path = self.__out_path
+        if not out_path:
+            out_path = self.__out_path
 
         out_file = f"{out_path}merged_public_{start_time}.csv"
 
@@ -324,7 +334,7 @@ class Helper_public_travel():
         ----------
         problem_vills_file: str.
             the file path + name to locate the problem_vills.csv
-        
+
         Return
         ------
             None.
@@ -374,10 +384,10 @@ class Helper_public_travel():
                 problem_vills_fpath=problem_vills_fpath,
                 out_fpath=recentered_fpath
             )
-        
+
         recenter_list = pd.read_csv(recentered_fpath, dtype='str')
         recenter_list = recenter_list['VILLCODE'].tolist()
-        
+
         # 1. filter the pairs including recentered villages out
         have_recenter = (rerun_pairs['A_villcode'].isin(recenter_list)) |\
                         (rerun_pairs['B_villcode'].isin(recenter_list))
@@ -387,7 +397,7 @@ class Helper_public_travel():
         # was thinking only rerun the pairs with both back and forth are empty
         both_nan = (rerun_pairs['AB_travel_time'].isna()) &\
                    (rerun_pairs['BA_travel_time'].isna())
-        
+
         code_cols = ['A_villcode', 'B_villcode']
         rerun_pairs = rerun_pairs[code_cols]
 
@@ -416,7 +426,8 @@ class Helper_public_travel():
             ]
             re_re_pairs = np.array(re_re_pairs)  # 57 x 57
             # no need for flatten, the following operation gives a 1d array size = (57^2 - 57) / 2
-            above_diagonal = re_re_pairs[np.triu_indices_from(re_re_pairs, k=1)]
+            above_diagonal = re_re_pairs[np.triu_indices_from(
+                re_re_pairs, k=1)]
 
             rrp_df = pd.DataFrame(
                 data=list(map(literal_eval, above_diagonal)),
@@ -424,7 +435,8 @@ class Helper_public_travel():
             )
 
             # 2-3. Concat with the rerun pairs
-            rerun_pairs = pd.concat([rerun_pairs, rnp_df, rrp_df]).reset_index(drop=True)
+            rerun_pairs = pd.concat(
+                [rerun_pairs, rnp_df, rrp_df]).reset_index(drop=True)
 
         rerun_pairs['A_villcode'] = rerun_pairs['A_villcode'].astype(int)
         rerun_pairs['B_villcode'] = rerun_pairs['B_villcode'].astype(int)
@@ -432,10 +444,11 @@ class Helper_public_travel():
         # 3. Get the lon lat
         for x in ['A', 'B']:
             tmp = self.__centroids.rename(columns={
-                orig_name: f'{x}_' + orig_name.lower() 
+                orig_name: f'{x}_' + orig_name.lower()
                 for orig_name in self.__centroids.columns
             })
-            rerun_pairs = rerun_pairs.merge(tmp, on=f'{x}_villcode', how='left')
+            rerun_pairs = rerun_pairs.merge(
+                tmp, on=f'{x}_villcode', how='left')
 
         # A_villcode,B_villcode,A_lon,A_lat,B_lon,B_lat
         rerun_pairs.to_csv(out_fpath, index=False)
@@ -666,12 +679,16 @@ class Helper_travel_cost():
         if mode == 'public':
             # if both AB and BA time are empty, set them to 3000,
             # if one of them have value, use that value.
-            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(folded_pair[ba_time_col])
-            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(folded_pair[ab_time_col])
+            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(
+                folded_pair[ba_time_col])
+            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(
+                folded_pair[ab_time_col])
 
             fake_time = 3000
-            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(fake_time)
-            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(fake_time)
+            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(
+                fake_time)
+            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(
+                fake_time)
 
             print(folded_pair[[a_col, b_col, ab_time_col, ba_time_col]])
 
@@ -866,15 +883,18 @@ class Helper_travel_cost():
         # 2. get the "TOWNCODE" used in travel cost
         #    right join to keep only the filtered districts (since town_code_TP was filtered)
         survey_df = survey_df.merge(
-            town_code_TP.rename(columns={"TOWNCODE": 'TOWNCODE_orig', "TOWNNAME": 'TOWNNAME_orig'}), 
+            town_code_TP.rename(
+                columns={"TOWNCODE": 'TOWNCODE_orig', "TOWNNAME": 'TOWNNAME_orig'}),
             left_on='Residence', right_on='code', how='right'
         )
 
         # Dest: need only one of work and school to be in Taipei Metropolitan
         survey_df['Dest'] = np.where(
-            survey_df['Workplace'].isin(town_code_TP['code']), survey_df['Workplace'],
+            survey_df['Workplace'].isin(
+                town_code_TP['code']), survey_df['Workplace'],
             np.where(
-                survey_df['School'].isin(town_code_TP['code']), survey_df['School'],
+                survey_df['School'].isin(
+                    town_code_TP['code']), survey_df['School'],
                 0
             )
         )
@@ -884,7 +904,8 @@ class Helper_travel_cost():
 
         # Make sure destination fall in Taipei Metropolitan
         survey_df = survey_df.merge(
-            town_code_TP.rename(columns={"TOWNCODE": 'TOWNCODE_dest', "TOWNNAME": 'TOWNNAME_dest'}), 
+            town_code_TP.rename(
+                columns={"TOWNCODE": 'TOWNCODE_dest', "TOWNNAME": 'TOWNNAME_dest'}),
             left_on='Dest', right_on='code', how='right'
         )
 
@@ -935,8 +956,6 @@ class Helper_travel_cost():
         #  Notice: 1. the 'mode' here should be just private and public
         #          2. if there are < 1 count of sum of counts of private and public, then drop this pair.
 
-
-
         # (another option) group by TOWNCODE, count the occurance of codes in Transportation_1-10
         # 但這個方法就是很難定義分母 (不可能是sample size，也許是用all non-na count)
 
@@ -983,14 +1002,21 @@ def travel_cost_helper():
     #     total_value_added_ls,avg_employment_ls,population,floorspace,
     #     floorspace_R,floorspace_C,avg_price_R,avg_price_C,pop_den,employ_den
     calib = pd.read_csv(f"{DATA_PATH}calibration_data_TP.csv")  # 1247
-    calib = calib[['VILLCODE', 'area', 'employment', 'population', 'TOWNNAME', 'VILLNAME']]
+    calib = calib[['VILLCODE', 'area', 'employment',
+                   'population', 'TOWNNAME', 'VILLNAME']]
 
     # 先用private做測試
     # htc.village_to_township(mode='public', calib_info=calib)
     # htc.village_to_township(mode='private', calib_info=calib)
 
-    
+
 def main():
+    # ============
+    #  Split Data
+    # ============
+    h = Helper_tdx()
+    h.data_into_x_splits(2, "JJinTP_data_TW/public_data/", 'rerun_pairs.csv')
+
     # =============
     #  Survey Data
     # =============
