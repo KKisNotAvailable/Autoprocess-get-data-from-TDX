@@ -25,9 +25,32 @@ class Utils():
         the travel time are different for back and forth.
         Notice that the indices are always sorted.
         '''
+        a_col = kwargs['A_villcode']
+        b_col = kwargs['B_villcode']
+
+        ab_time_col = kwargs['time'] if is_same else kwargs['ab_time']
+        ba_time_col = kwargs['time'] if is_same else kwargs['ba_time']
+
+        # 1. sort the data by a_col and b_col
+        data = data.sort_values(by=[a_col, b_col], ascending=[True, True])
+
         if not is_half:
             return data.pivot_table(
-                index=kwargs[''], columns=kwargs[''], values=kwargs[''], fill_value=0)
+                index=a_col, columns=b_col, values=ab_time_col, fill_value=0)
+
+        ab_matrix = data.pivot_table(
+            index=a_col, columns=b_col, values=ab_time_col, fill_value=0)
+        ba_matrix = data.pivot_table(
+            index=b_col, columns=a_col, values=ba_time_col, fill_value=0)
+
+        all_points = sorted(set(data[a_col]).union(data[b_col]))
+
+        ab_matrix = ab_matrix.reindex(
+            index=all_points, columns=all_points, fill_value=0)
+        ba_matrix = ba_matrix.reindex(
+            index=all_points, columns=all_points, fill_value=0)
+
+        return ab_matrix + ba_matrix
 
     def melt_mat(self, mat, is_same = False):
         '''
@@ -530,23 +553,32 @@ class Helper_public_travel():
     def merge_walking(self, fpath):
         walk_data = pd.read_csv(fpath)
         walk_data = walk_data[['id_orig', 'id_dest', 'duration']]
-        walk_data['key1'] = walk_data['id_orig'] + walk_data['id_dest']
-        walk_data['key2'] = walk_data['id_dest'] + walk_data['id_orig']
+        
+        # 1. make the walking and public data into a matrix with index sorted.
+        util = Utils()
+        
+        walk_args = {
+            'A_villcode': 'id_orig',
+            'B_villcode': 'id_dest',
+            'time': 'duration'
+        }
+        walk_mat = util.to_mat(walk_data, is_half=True, is_same=True, **walk_args)
 
-        self.merged_file['key'] = self.merged_file['A_villcode'] + self.merged_file['B_villcode']
+        public_args = {
+            'A_villcode': 'A_villcode',
+            'B_villcode': 'B_villcode',
+            'ab_time': 'AB_travel_time',
+            'ba_time': 'BA_travel_time'
+        }
+        public_mat = util.to_mat(self.merged_file, is_half=True, is_same=False, **public_args)
 
-        self.merged_file = self.merged_file.merge(
-            walk_data[['key1', 'duration']].rename(columns={'key1': 'key', 'duration': 'walk'}),
-            on='key', how='left'
-        )
-        self.merged_file = self.merged_file.merge(
-            walk_data[['key2', 'duration']].rename(columns={'key2': 'key', 'duration': 'walk_add'}),
-            on='key', how='left'
-        )
+        # 2. get the mask where public is 0.
+        mask_close_vills = (public_mat.to_numpy() == 0)
+        print(self.merged_file)
+        # print((self.merged_file == 0).sum().sum())
+        # print(sum(sum(mask_close_vills)))
 
-        self.merged_file['walk'] = self.merged_file['walk'].fillna(self.merged_file['walk_add'])
-
-        print(self.merged_file[self.merged_file['walk'].isna()])
+        # 3. take elementwise min of public and walking.
 
     def save_public(self, fpath):
         self.merged_file.to_csv(fpath, index=False)
@@ -1169,7 +1201,7 @@ def main():
     hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v3.csv')
 
     hpt.read_public_file(PUBLIC_PATH+'merged_public.csv')
-    hpt.merge_walking(PUBLIC_PATH+'travel_walking.csv')
+    # hpt.merge_walking(PUBLIC_PATH+'travel_walking.csv')
 
     # print(hpt.merged_file[hpt.merged_file['AB_travel_time'].isnull() & hpt.merged_file['BA_travel_time'].isnull()])
 
