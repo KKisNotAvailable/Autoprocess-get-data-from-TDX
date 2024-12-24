@@ -332,6 +332,61 @@ class Helper_public_travel():
 
         # Both are 57
 
+    def _get_missing_pairs(self, stacked_public_fpath: str, walking_fpath: str, out_fpath: str, split=2):
+        '''
+        This function is to get the missing pairs during the get TDX process.
+        I have no idea why this happened. The original subfiles have the correct
+        count, but sub 8 and 9, no matter at depart time 10am or 6pm, both have 
+        the same missing amount.
+        As a result, we are calibrating using the walking data to get the 
+        missing pairs.
+        '''
+        stacked = pd.read_csv(
+            stacked_public_fpath, 
+            # usecols=['A_villcode','B_villcode','A_lat','A_lon','B_lat','B_lon'],
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+        stacked['key1'] = stacked['A_villcode'] + stacked['B_villcode']
+        stacked['key2'] = stacked['B_villcode'] + stacked['A_villcode']
+
+        walk = pd.read_csv(
+            walking_fpath,
+            usecols=['id_orig','lon_orig','lat_orig','id_dest','lon_dest','lat_dest'],
+            dtype={'id_orig': 'str', 'id_dest': 'str'}
+        )
+        walk['key'] = walk['id_orig'] + walk['id_dest']
+
+        lost_keys = list(set(walk['key']) - set(stacked['key2']))
+
+        # print(len(lost_keys)) # 44572
+
+        lost_pairs = walk[walk['key'].isin(lost_keys)]
+
+        # rename the columns (same as public data) for rerun TDX
+        name_map = {
+            'id_orig': 'A_villcode','lon_orig': 'A_lon','lat_orig': 'A_lat',
+            'id_dest': 'B_villcode','lon_dest': 'B_lon','lat_dest': 'B_lat'
+        }
+        lost_pairs = lost_pairs[name_map.keys()].rename(columns=name_map)
+        
+        if split > 1:
+            for i, sub in enumerate(np.array_split(lost_pairs, split)):
+                cur_name = out_fpath.replace('.csv', '') + f'_{i+1}.csv'
+                sub.to_csv(cur_name, index=False)
+        else:
+            lost_pairs.to_csv(out_fpath, index=False)
+
+        # ==================
+        #  Additional Check
+        # ==================
+        # 1. There are duplicates in the public
+        # value_counts = stacked['key2'].value_counts()
+        # duplicates = value_counts[value_counts > 1]
+        # print(duplicates) # 36468
+
+        # 2. check if the duplicates have the same data => Yes
+        # print(stacked.loc[stacked['key2'] == '6500002007365000070012', ['AB_travel_time', 'BA_travel_time']])
+
     def merge_public_files(
         self, source_path, out_path="",
         start_time="6pm", file_cnt=20
@@ -366,7 +421,7 @@ class Helper_public_travel():
             f"{source_path}travel_at_{start_time}_{s}.csv" for s in range(1, file_cnt+1)]
 
         # Load, concatenate, and save as a single file
-        df = pd.concat([pd.read_csv(f) for f in file_paths])
+        df = pd.concat([pd.read_csv(f) for f in file_paths], axis=0)
         df.to_csv(out_file, index=False)
         return
 
@@ -501,7 +556,7 @@ class Helper_public_travel():
 
         return
 
-    def read_public_file(self, merged_fpath):
+    def read_public_file(self, merged_fpath: str, add_fpath = ''):
         '''
         This function will store the merged public file as the attribute
         for later pair update operations.
@@ -509,6 +564,7 @@ class Helper_public_travel():
         main_file = pd.read_csv(merged_fpath)
 
         main_file['key'] = main_file['A_villcode'] + main_file['B_villcode']
+        main_file = main_file.drop_duplicates(subset='key')
         main_file = main_file.set_index('key')
 
         for rerun in self.__rerun_pairs:
@@ -518,6 +574,10 @@ class Helper_public_travel():
 
             main_file.update(key1_file)
             main_file.update(key2_file)
+
+        if add_fpath:
+            missing_pairs = pd.read_csv(add_fpath)
+            main_file = pd.concat([main_file, missing_pairs])
 
         self.merged_file = main_file[['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']].reset_index(drop=True)
 
@@ -1114,12 +1174,6 @@ def TDX_helper():
 
 def travel_cost_helper():
     htc = Helper_travel_cost()
-    hpt = Helper_public_travel()
-    # =============================
-    #  Merge Public Transport Data
-    # =============================
-    # TODO: is this correct way to run this function??
-    # hpt.merge_public_files(source_path="output/public_things") # this generates merged_public_{time}.csv
 
     # ============================================================
     #  Combine the Village Level Transportation to Township Level
@@ -1152,18 +1206,25 @@ def main():
     # htc.process_survey(years=years)
 
     # =============
-    #  Travel Cost
-    # =============
-    # travel_cost_helper()
-
-    # =============
     #  Public Data
     # =============
     hpt = Helper_public_travel(
         calib_path=FILE_CALIB,
         centroid_path=FILE_VILL_CENTROID
     )
-    # Public data examination
+
+    # ---- Preprocess ----
+    # Stack main data
+    # hpt.merge_public_files(source_path="output/public_things/") # this generates merged_public_{time}.csv
+
+    # Get the missings in the stack public
+    # hpt._get_missing_pairs(
+    #     stacked_public_fpath=PUBLIC_PATH+'merged_public.csv',
+    #     walking_fpath=PUBLIC_PATH+'travel_walking.csv',
+    #     out_fpath=PUBLIC_PATH+'public_miss_pairs.csv'
+    # )
+
+    # ---- Start Checking ----
     # hpt._public_data_check(fpath=f"{DATA_PATH}public_data/merged_public.csv")
     # TODO: 
     # 1. can set whether to generate problem pairs and problem village list
@@ -1182,7 +1243,6 @@ def main():
     #     out_fpath=f'{OUT_PATH}rerun_pairs_v1.csv'
     # )
 
-    # This generates rerun pairs for different departure time
     # for i in [1, 2]:
     #     hpt.get_rerun_pairs(
     #         problem_vills_fpath=f'{OUT_PATH}problem_vills.csv',
@@ -1194,16 +1254,21 @@ def main():
     #     )
 
     # This part merges main public file and the rerun pairs
-    hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v1_1.csv')
-    hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v1_2.csv')
-    hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v2_1.csv')
-    hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v2_2.csv')
-    hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v3.csv')
+    # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v1_1.csv')
+    # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v1_2.csv')
+    # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v2_1.csv')
+    # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v2_2.csv')
+    # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v3.csv')
 
-    hpt.read_public_file(PUBLIC_PATH+'merged_public.csv')
+    # hpt.read_public_file(PUBLIC_PATH+'merged_public.csv')
     # hpt.merge_walking(PUBLIC_PATH+'travel_walking.csv')
 
     # print(hpt.merged_file[hpt.merged_file['AB_travel_time'].isnull() & hpt.merged_file['BA_travel_time'].isnull()])
+
+    # =============
+    #  Travel Cost
+    # =============
+    # travel_cost_helper()
 
 if __name__ == "__main__":
     main()
