@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import numpy as np
 import pandas as pd
 import json
 import threading
@@ -281,6 +282,33 @@ def t_back_to_mat():
 
     print(combined_matrix)
 
+def t_mat_to_df():
+    locations = ['locationA', 'locationB', 'locationC']
+    matrix = np.array([
+        [0, 60, 70],  # locationA -> others
+        [54, 0, 80],  # locationB -> others
+        [65, 75, 0]   # locationC -> others
+    ])
+    matrix = np.array([
+        [0, 60, 70],  # locationA -> others
+        [60, 0, 80],  # locationB -> others
+        [70, 80, 0]   # locationC -> others
+    ])
+
+    # Create a DataFrame to store the data
+    rows, cols = np.triu_indices(len(locations), k=1)
+
+    data = {
+        'depart': [locations[r] for r in rows],
+        'dest': [locations[c] for c in cols],
+        'forward': matrix[rows, cols],
+        'backward': matrix[cols, rows]
+    }
+
+    df = pd.DataFrame(data)
+
+    print(df)   
+
 
 def main():
     c1 = [24.9788580602204,121.55598430669878]
@@ -292,7 +320,9 @@ def main():
     # cond = conds_to_str(set_conds(c1, c2))
     # print(cond)
 
-    t_back_to_mat()
+    # t_back_to_mat()
+
+    t_mat_to_df()
 
     
 if __name__ == '__main__':
