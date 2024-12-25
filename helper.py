@@ -1,7 +1,7 @@
 import pandas as pd
 from tqdm import tqdm
 from ast import literal_eval
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, deque
 import numpy as np
 import json
 import os
@@ -52,11 +52,29 @@ class Utils():
 
         return ab_matrix + ba_matrix
 
-    def melt_mat(self, mat, is_same = False):
+    def melt_mat(self, mat, index_list, is_same=False):
         '''
-        Assuming the back and forth are different, so will generate two travel
-        time column.
+        If upper triangle and lower triangle have different value, two columns
+        will be generated.
+        Note that the diagonal of the matrix will be ignored. 
+        => This might be modified for other purposes.
         '''
+        rows, cols = np.triu_indices(len(index_list), k=1)
+
+        data = {
+            'row_idx': [index_list[r] for r in rows],
+            'col_idx': [index_list[c] for c in cols],
+            'upper_triangle': mat[rows, cols],
+            'lower_triangle': mat[cols, rows]
+        }
+        if is_same:
+            data = {
+                'row_idx': [index_list[r] for r in rows],
+                'col_idx': [index_list[c] for c in cols],
+                'value': mat[rows, cols]
+            }
+
+        return pd.DataFrame(data)
 
 class Helper_tdx():
     # TODO: need to change where the batch files destination path.
@@ -208,7 +226,7 @@ class Helper_tdx():
 class Helper_public_travel():
     def __init__(self, out_path=OUT_PATH, calib_path='', centroid_path='') -> None:
         self.__out_path = out_path
-        self.__rerun_pairs = []
+        self.__rerun_pairs = deque()  # will be used as FIFO, append and popleft
 
         calib = pd.read_csv(calib_path)  # 1247
         calib = calib[['VILLCODE', 'area', 'employment',
@@ -219,7 +237,7 @@ class Helper_public_travel():
         centroids = pd.read_csv(centroid_path)
         self.__centroids = centroids
 
-    def _public_data_check(self, fpath):
+    def _public_data_check(self, fpath, is_both_empty=False):
         '''
         Mainly generates to files for centroid validity check: 
         1. public_problem_pairs: for checking and later extract pairs to get public 
@@ -238,6 +256,8 @@ class Helper_public_travel():
         ------
             None
         '''
+        # TODO: split the check problem and generate problem centroid into two 
+        #       functions
         calib_info = self.__calib
 
         # since both set and list are not hashable, turn the sorted list into string
@@ -245,7 +265,7 @@ class Helper_public_travel():
         data = data[['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']]
         data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(data['A_villcode'], data['B_villcode'])]
 
-        walk_data = pd.read_csv(f"{DATA_PATH}public_data/travel_walking.csv")
+        walk_data = pd.read_csv(f"{PUBLIC_PATH}travel_walking.csv")
         walk_data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(
             walk_data['id_orig'], walk_data['id_dest'])]
         walk_data = walk_data[['point_set', 'duration']]
@@ -278,8 +298,12 @@ class Helper_public_travel():
         data = data[data['duration'] > 1800]
 
         # check AB_travel_time and BA_travel_time still empty
-        check = data[(data['AB_travel_time'].isna()) |
-                     (data['BA_travel_time'].isna())]
+        if is_both_empty:
+            check = data[(data['AB_travel_time'].isna()) &
+                        (data['BA_travel_time'].isna())]
+        else:
+            check = data[(data['AB_travel_time'].isna()) |
+                        (data['BA_travel_time'].isna())]
         check = check[[
             'A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time',
             'name_A', 'name_B', 'duration'
@@ -551,35 +575,50 @@ class Helper_public_travel():
             rerun_pairs = rerun_pairs.merge(
                 tmp, on=f'{x}_villcode', how='left')
 
-        # A_villcode,B_villcode,A_lon,A_lat,B_lon,B_lat
+        # 'A_villcode','B_villcode','A_lat','A_lon','B_lat','B_lon'
         rerun_pairs.to_csv(out_fpath, index=False)
 
         return
 
-    def read_public_file(self, merged_fpath: str, add_fpath = ''):
+    def read_public_file(self, merged_fpath: str):
         '''
         This function will store the merged public file as the attribute
         for later pair update operations.
         '''
-        main_file = pd.read_csv(merged_fpath)
+        cols_to_keep = ['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']
+
+        if isinstance(merged_fpath, list):
+            to_cat = []
+            for fpath in merged_fpath:
+                cur = pd.read_csv(fpath, dtype={"A_villcode": 'str', "B_villcode": 'str'})
+                cur = cur[cols_to_keep]
+                to_cat.append(cur)
+
+            main_file = pd.concat(to_cat)
+        else:
+            main_file = pd.read_csv(merged_fpath, dtype={"A_villcode": 'str', "B_villcode": 'str'})
+            main_file = main_file[cols_to_keep]
 
         main_file['key'] = main_file['A_villcode'] + main_file['B_villcode']
         main_file = main_file.drop_duplicates(subset='key')
         main_file = main_file.set_index('key')
 
-        for rerun in self.__rerun_pairs:
+        while self.__rerun_pairs:
+            rerun = self.__rerun_pairs.popleft()
             # replace data in main_file (regardless the a, b villcode order)
             key1_file = rerun.set_index('key1')
+            key1_file = key1_file[cols_to_keep]
             key2_file = rerun.set_index('key2')
+            key2_file = key2_file[cols_to_keep]
 
             main_file.update(key1_file)
             main_file.update(key2_file)
 
-        if add_fpath:
-            missing_pairs = pd.read_csv(add_fpath)
-            main_file = pd.concat([main_file, missing_pairs])
+        # if one of the travel time is empty, fill in with the other
+        main_file['AB_travel_time'] = main_file['AB_travel_time'].fillna(main_file['BA_travel_time'])
+        main_file['BA_travel_time'] = main_file['BA_travel_time'].fillna(main_file['AB_travel_time'])
 
-        self.merged_file = main_file[['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']].reset_index(drop=True)
+        self.merged_file = main_file.reset_index(drop=True)
 
         print("Merged file created.")
 
@@ -596,7 +635,7 @@ class Helper_public_travel():
         v4 => there might be v4, since I'm thinking reviewing all of the centroids
               as I notice some are still wierd.
         '''
-        cur_rerun = pd.read_csv(rerun_fpath)
+        cur_rerun = pd.read_csv(rerun_fpath, dtype={"A_villcode": 'str', "B_villcode": 'str'})
         cur_rerun['key1'] = cur_rerun['A_villcode'] + cur_rerun['B_villcode']
         cur_rerun['key2'] = cur_rerun['B_villcode'] + cur_rerun['A_villcode']
 
@@ -610,9 +649,11 @@ class Helper_public_travel():
 
         print(f"{matches[-1]} rerun file added.")
 
-    def merge_walking(self, fpath):
-        walk_data = pd.read_csv(fpath)
+    def merge_walking(self, fpath, out_fpath):
+        walk_data = pd.read_csv(fpath, dtype={"id_orig": 'str', "id_dest": 'str'})
         walk_data = walk_data[['id_orig', 'id_dest', 'duration']]
+
+        all_vills = sorted(set(walk_data['id_orig']).union(walk_data['id_dest']))
         
         # 1. make the walking and public data into a matrix with index sorted.
         util = Utils()
@@ -623,6 +664,7 @@ class Helper_public_travel():
             'time': 'duration'
         }
         walk_mat = util.to_mat(walk_data, is_half=True, is_same=True, **walk_args)
+        walk_mat = walk_mat.to_numpy()
 
         public_args = {
             'A_villcode': 'A_villcode',
@@ -631,14 +673,35 @@ class Helper_public_travel():
             'ba_time': 'BA_travel_time'
         }
         public_mat = util.to_mat(self.merged_file, is_half=True, is_same=False, **public_args)
+        public_mat = public_mat.to_numpy()
 
         # 2. get the mask where public is 0.
-        mask_close_vills = (public_mat.to_numpy() == 0)
-        print(self.merged_file)
-        # print((self.merged_file == 0).sum().sum())
-        # print(sum(sum(mask_close_vills)))
+        mask_close_vills = (public_mat == 0)
+        # print(self.merged_file.isna().sum().sum())  # 3822
+        # print(sum(sum(mask_close_vills)))  # 5127 (diff = 1305 = 0's on diagonal)
 
-        # 3. take elementwise min of public and walking.
+        # check if these pairs have walking time less than 30 min
+        # masked_values = walk_mat[mask_close_vills]
+        # print(np.sort(masked_values[masked_values > 1800])[::-1])  # TODO:about 170 entries
+
+        # 3. replace public if walk time is faster.
+        mask_walk_faster = public_mat > walk_mat
+
+        mask_use_walk = mask_close_vills | mask_walk_faster
+
+        public_mat[mask_use_walk] = walk_mat[mask_use_walk]
+
+        # 4. turn matrix back to pairwise dataframe.
+        # NOTE: the order of A_villcode and B_villcode might not be the same as original
+        public_df = util.melt_mat(mat=public_mat, index_list=all_vills)
+        public_df = public_df.rename(columns={
+            "row_idx": 'A_villcode',
+            "col_idx": 'B_villcode',
+            "upper_triangle": 'AB_travel_time',
+            "lower_triangle": 'BA_travel_time'
+        })
+
+        public_df.to_csv(out_fpath, index=False)
 
     def save_public(self, fpath):
         self.merged_file.to_csv(fpath, index=False)
@@ -1192,17 +1255,20 @@ def travel_cost_helper():
 
 
 def main():
+    # Actually, the following part should be written in python notebook, 
+    # because in that form, we can write notes and seperately run code blocks.
+
     # ============
     #  Split Data
     # ============
-    h = Helper_tdx()
+    # h = Helper_tdx()
     # h.data_into_x_splits(2, "JJinTP_data_TW/public_data/", 'rerun_pairs.csv')
 
     # =============
     #  Survey Data
     # =============
-    htc = Helper_travel_cost()
-    years = list(range(98, 106))  # ROC 98 ~ 105
+    # htc = Helper_travel_cost()
+    # years = list(range(98, 106))  # ROC 98 ~ 105
     # htc.process_survey(years=years)
 
     # =============
@@ -1224,9 +1290,12 @@ def main():
     #     out_fpath=PUBLIC_PATH+'public_miss_pairs.csv'
     # )
 
-    # ---- Start Checking ----
-    # hpt._public_data_check(fpath=f"{DATA_PATH}public_data/merged_public.csv")
+
+    # ---- Start Checking result from TDX ----
+    # 1. Main files
+    # hpt._public_data_check(fpath=f"{PUBLIC_PATH}merged_public.csv")
     # TODO: 
+    # * type out all the checking and rerun steps
     # 1. can set whether to generate problem pairs and problem village list
     # 2. self define the generated file suffixes (or file name)
     # 3. the merge public function want to be able to merge given set of files. (eg. my rerun results)
@@ -1253,17 +1322,63 @@ def main():
     #         out_fpath=f'{PUBLIC_PATH}rerun_pairs_v3_{i}.csv'
     #     )
 
-    # This part merges main public file and the rerun pairs
+    # need to call TDX to get the rerun_result 
+    # (TODO:but currently I use batch file, need to think how to include
+    # in this process)
+
+    # 2. Missing pairs (from the main stack, after checking with walking data)
+    # hpt._public_data_check(
+    #     fpath=f"{PUBLIC_PATH}public_miss_pairs_results_1.csv",
+    #     is_both_empty=True
+    # )
+    # hpt._public_data_check(
+    #     fpath=f"{PUBLIC_PATH}public_miss_pairs_results_2.csv",
+    #     is_both_empty=True
+    # )
+    # since there are not many records in both files, I manually combine them into
+    # 'problem_public_miss_pairs_results.csv'
+    # hpt.get_rerun_pairs(
+    #     problem_vills_fpath=f'{OUT_PATH}problem_vills.csv',
+    #     problem_pairs_fpath=f'{PUBLIC_PATH}problem_public_miss_pairs_results.csv',
+    #     recentered_fpath=f'{OUT_PATH}recentered_list.csv',
+    #     # setting both to false get the coords for exactly the problem pairs passed in.
+    #     # TODO: would the following bools set to different value?
+    #     include_recenter_pairs_in_rerun=False,
+    #     exclude_recenter_pairs_in_probpair=False,
+    #     out_fpath=f'{PUBLIC_PATH}rerun_pairs_public_miss.csv'
+    # )
+
+    # Then we get results from TDX of the rerun pairs, and manually search
+    # pairs with both ways empty on the Google maps. When filling the maps
+    # result, if public is possible, leave the route empty, if only walking
+    # is possible, state 'walk'. File generated named 'rerun_public_miss_pairs_results.csv'
+
+    # In sum, there are three files output in this step, 
+    # public_miss_pairs_results_1.csv, ..._2.csv, rerun_public_miss_pairs_results.csv
+
+    # ---- Merges files ----
+    # 1. deal with the missings (first stack 1 and 2, then update with rerun)
+    # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_miss_pairs_results.csv')
+    # hpt.read_public_file(
+    #     [PUBLIC_PATH+'public_miss_pairs_results_1.csv', PUBLIC_PATH+'public_miss_pairs_results_2.csv']
+    # )
+    # will have some missing, those are walking time shorter than 30 min.
+    # hpt.save_public(PUBLIC_PATH+'public_miss_pairs_results.csv')
+
+    # 2. get the full public file
     # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v1_1.csv')
     # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v1_2.csv')
     # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v2_1.csv')
     # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v2_2.csv')
     # hpt.add_rerun_pairs(PUBLIC_PATH+'rerun_public_results_v3.csv')
 
-    # hpt.read_public_file(PUBLIC_PATH+'merged_public.csv')
-    # hpt.merge_walking(PUBLIC_PATH+'travel_walking.csv')
-
-    # print(hpt.merged_file[hpt.merged_file['AB_travel_time'].isnull() & hpt.merged_file['BA_travel_time'].isnull()])
+    # hpt.read_public_file(
+    #     [PUBLIC_PATH+'merged_public.csv', PUBLIC_PATH+'public_miss_pairs_results.csv']
+    # )
+    # hpt.merge_walking(
+    #     fpath=PUBLIC_PATH+'travel_walking.csv',
+    #     out_fpath=PUBLIC_PATH+'public_travel_time.csv'
+    # )
 
     # =============
     #  Travel Cost
