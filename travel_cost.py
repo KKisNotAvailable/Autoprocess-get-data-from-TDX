@@ -5,20 +5,6 @@ from scipy.optimize import minimize
 from tqdm import tqdm
 
 
-filename = 'travel_at_6pm_1'
-
-
-def to_mat(pair_data: pd.DataFrame):
-    '''
-    The pair_data is assumed to have (thou not exact same name):
-    orig, dest, travel_time_orig2dest, travel_time_dest2orig.
-
-    Notice that for private we assume orig2dest and dest2orig have the same
-    travel time. In such case, this function also accepts data with three cols.
-    '''
-
-    # return transformed_data.values # to np 2darray
-
 def travel_cost_single_year(
         params: list,
         public_travel_mat: np.ndarray,
