@@ -10,6 +10,7 @@ import re
 OUT_PATH = "output/"
 DATA_PATH = "JJinTP_data_TW/"
 PUBLIC_PATH = DATA_PATH + 'public_data/'
+PRIVATE_PATH = DATA_PATH + 'car_data/'
 LOG_PATH = "log/"
 
 FILE_CALIB = "JJinTP_data_TW/calibration_data_TP.csv"
@@ -707,8 +708,11 @@ class Helper_public_travel():
         self.merged_file.to_csv(fpath, index=False)
 
 class Helper_travel_cost():
-    def __init__(self, destination: str = "./JJinTP_data_TW/Routing/") -> None:
-        self.path = destination
+    def __init__(self, calib_path='') -> None:
+        calib = pd.read_csv(calib_path)  # 1247
+        calib = calib[['VILLCODE', 'area', 'employment',
+                       'population', 'TOWNNAME', 'VILLNAME']]
+        self.__calib = calib
 
     def __flawed_village_to_township(self, mode: str, calib_info: pd.DataFrame, to_file: bool = True):
         '''
@@ -883,7 +887,7 @@ class Helper_travel_cost():
             return
         return df
 
-    def village_to_township(self, mode: str, calib_info: pd.DataFrame, to_file: bool = True):
+    def village_to_township(self, mode: str, out_fpath: str = ''):
         '''
         This function is to merge the village-wise travel times to township-wise
         public columns: A_villcode,B_villcode,A_lat,A_lon,B_lat,B_lon,AB_travel_time,AB_ttl_cost,AB_transfer_cnt,AB_route,BA_travel_time,BA_ttl_cost,BA_transfer_cnt,BA_route
@@ -898,19 +902,19 @@ class Helper_travel_cost():
         ------
             the township-wise travel time
         '''
+        calib_info = self.__calib
+
         mode = mode.lower()
         if mode == 'public':
-            # I manually copy the merged data to this directory and renamed (remove the timestamp)
-            # note that in this data public transport unavailble is NaN, but later pivot_table fill 0 will automatically turn them into 0's
             folded_pair = pd.read_csv(
-                f"{DATA_PATH}public_data/merged_public.csv")
+                f"{PUBLIC_PATH}{mode}_travel_time.csv")
             a_col = 'A_villcode'
             b_col = 'B_villcode'
             ab_time_col = 'AB_travel_time'
             ba_time_col = 'BA_travel_time'
         elif mode == 'private':
             folded_pair = pd.read_csv(
-                f"{DATA_PATH}car_data/village_centroid_TP_output_20240605143517.csv")
+                f"{PRIVATE_PATH}{mode}_travel_time.csv")
             a_col = 'id_orig'
             b_col = 'id_dest'
             # back and forth share the same time for driving
@@ -920,29 +924,10 @@ class Helper_travel_cost():
             raise ValueError("receive only either 'public' or 'private'.")
         print(f"Currently working on {mode}!")
 
-        # Filter the villages (bot origin and destination)
+        # Filter the villages (both origin and destination)
         keep_villcodes = calib_info['VILLCODE']
         folded_pair = folded_pair[folded_pair[a_col].isin(keep_villcodes)]
         folded_pair = folded_pair[folded_pair[b_col].isin(keep_villcodes)]
-
-        # public need special treatment
-        if mode == 'public':
-            # if both AB and BA time are empty, set them to 3000,
-            # if one of them have value, use that value.
-            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(
-                folded_pair[ba_time_col])
-            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(
-                folded_pair[ab_time_col])
-
-            fake_time = 3000
-            folded_pair[ab_time_col] = folded_pair[ab_time_col].fillna(
-                fake_time)
-            folded_pair[ba_time_col] = folded_pair[ba_time_col].fillna(
-                fake_time)
-
-            print(folded_pair[[a_col, b_col, ab_time_col, ba_time_col]])
-
-            return
 
         # ===================================
         #  Start merging village to township
@@ -1015,23 +1000,26 @@ class Helper_travel_cost():
 
         town_travel_times = pd.concat(
             township_travel_dfs, ignore_index=True)  # 961
+        
+        # sort town_a and town_b for clear matrix demonstration
+        town_travel_times = town_travel_times.sort_values(
+            by=['town_a', 'town_b'], ascending=[True, True]
+        )
 
         town_time_mat = town_travel_times.pivot_table(
             index='town_a', columns='town_b', values='time', fill_value=0)
+        
+        # Check if there are 0 or nan in the matrix (actually still dataframe)
+        has_zero = (town_time_mat == 0).any().any()
+        has_nan = town_time_mat.isnull().any().any()
 
-        # 如果要ordered index就參考下面的
-        # ab_matrix = ab_matrix.reindex(
-        #         index=all_points, columns=all_points, fill_value=0)
+        has_zero_or_nan = has_zero or has_nan
+        # print(has_zero_or_nan)
 
-        # TODO: now what? use matrix to do things?
-
-        print(town_travel_times)
-
-        return
-        if to_file:
-            df.to_csv()
+        if out_fpath:
+            town_time_mat.to_csv(out_fpath, index=False)
             return
-        return df
+        return town_time_mat
 
     def process_survey(self, years: list):
         '''
@@ -1235,25 +1223,6 @@ def TDX_helper():
         print("Program ending...")
 
 
-def travel_cost_helper():
-    htc = Helper_travel_cost()
-
-    # ============================================================
-    #  Combine the Village Level Transportation to Township Level
-    # ============================================================
-    # Columns: VILLCODE,COUNTYNAME,TOWNNAME,VILLNAME,area,num_est,employment,
-    #     avg_wage,num_est_ls,employment_ls,total_revenue_ls,
-    #     total_value_added_ls,avg_employment_ls,population,floorspace,
-    #     floorspace_R,floorspace_C,avg_price_R,avg_price_C,pop_den,employ_den
-    calib = pd.read_csv(f"{DATA_PATH}calibration_data_TP.csv")  # 1247
-    calib = calib[['VILLCODE', 'area', 'employment',
-                   'population', 'TOWNNAME', 'VILLNAME']]
-
-    # 先用private做測試
-    # htc.village_to_township(mode='public', calib_info=calib)
-    # htc.village_to_township(mode='private', calib_info=calib)
-
-
 def main():
     # Actually, the following part should be written in python notebook, 
     # because in that form, we can write notes and seperately run code blocks.
@@ -1264,12 +1233,7 @@ def main():
     # h = Helper_tdx()
     # h.data_into_x_splits(2, "JJinTP_data_TW/public_data/", 'rerun_pairs.csv')
 
-    # =============
-    #  Survey Data
-    # =============
-    # htc = Helper_travel_cost()
-    # years = list(range(98, 106))  # ROC 98 ~ 105
-    # htc.process_survey(years=years)
+    
 
     # =============
     #  Public Data
@@ -1383,7 +1347,18 @@ def main():
     # =============
     #  Travel Cost
     # =============
-    # travel_cost_helper()
+    htc = Helper_travel_cost(
+        calib_path=FILE_CALIB
+    )
+
+    # Survey data
+    # years = list(range(98, 106))  # ROC 98 ~ 105
+    # htc.process_survey(years=years)
+
+    # Combine village to township
+    for m in ['public', 'private']:
+        htc.village_to_township(mode=m, out_fpath=f"{DATA_PATH}{m}_town_travel_mat.csv")
+        print(f"{m} done.")
 
 if __name__ == "__main__":
     main()
