@@ -11,6 +11,7 @@ OUT_PATH = "output/"
 DATA_PATH = "JJinTP_data_TW/"
 PUBLIC_PATH = DATA_PATH + 'public_data/'
 PRIVATE_PATH = DATA_PATH + 'car_data/'
+SURVEY_PATH = DATA_PATH + 'survey_data/'
 LOG_PATH = "log/"
 
 FILE_CALIB = "JJinTP_data_TW/calibration_data_TP.csv"
@@ -1021,7 +1022,12 @@ class Helper_travel_cost():
             return
         return town_time_mat
 
-    def process_survey(self, years: list):
+    def process_survey(
+            self, 
+            years: list, 
+            public_pct_out_fpath: str = '',
+            private_pct_out_fpath: str = ''
+    ):
         '''
         This function will read all the raw survey data, clean them, and then
         save the cleaned and merged data to a new file.
@@ -1041,7 +1047,7 @@ class Helper_travel_cost():
         town_code = town_code[cond_ntp | cond_tp]
 
         # Base the townships needed on the Calibration data
-        town_code_TP = pd.read_csv(f"{DATA_PATH}calibration_data_TP.csv")
+        town_code_TP = self.__calib
         town_code_TP['TOWNCODE'] = town_code_TP['VILLCODE']\
             .astype("str").str[:-3]
         town_code_TP = town_code_TP[['TOWNCODE', 'TOWNNAME']]
@@ -1059,9 +1065,8 @@ class Helper_travel_cost():
         #    10 國道客運, 11 飛機, 12 步行, 13 自行車, 14 機車, 15 自用小客車(含小客貨兩用車), 16 自用大客車,
         #    17 自用小貨車, 18 自用大貨車(含大客貨兩用車), 19 免費公車, 31 國道客運, 32 公路客運, 33 復康巴士,
         #    97 其他, 98 不知道/拒答, NULL 未填答
-        # this file is manual extraction from the 變數名稱說明檔_98-105.csv
-        mode_codes = pd.read_csv(
-            f"{DATA_PATH}survey_data/transportation_code.csv")
+        # this file is a manual extraction from the 變數名稱說明檔_98-105.csv
+        mode_codes = pd.read_csv(f"{SURVEY_PATH}transportation_code.csv")
 
         mode_codes['code'] = mode_codes['code'].astype(int)
 
@@ -1096,7 +1101,7 @@ class Helper_travel_cost():
         survey_files = []
 
         for y in years:
-            file_path = f"{DATA_PATH}survey_data/{y}年民眾日常使用運具狀況調查原始資料.csv"
+            file_path = f"{SURVEY_PATH}{y}年民眾日常使用運具狀況調查原始資料.csv"
             cur_file = pd.read_csv(file_path, usecols=col_name_map.keys())
 
             # 1. for each file, keep only the columns above, make a year column
@@ -1122,17 +1127,17 @@ class Helper_travel_cost():
         #    right join to keep only the filtered districts (since town_code_TP was filtered)
         survey_df = survey_df.merge(
             town_code_TP.rename(
-                columns={"TOWNCODE": 'TOWNCODE_orig', "TOWNNAME": 'TOWNNAME_orig'}),
+                columns={"TOWNCODE": 'A_TOWNCODE', "TOWNNAME": 'A_TOWNNAME'}),
             left_on='Residence', right_on='code', how='right'
         )
 
-        # Dest: need only one of work and school to be in Taipei Metropolitan
+        # Dest: need only one of work or school to be in Taipei Metropolitan
         survey_df['Dest'] = np.where(
-            survey_df['Workplace'].isin(
-                town_code_TP['code']), survey_df['Workplace'],
+            survey_df['Workplace'].isin(town_code_TP['code']), 
+            survey_df['Workplace'],
             np.where(
-                survey_df['School'].isin(
-                    town_code_TP['code']), survey_df['School'],
+                survey_df['School'].isin(town_code_TP['code']), 
+                survey_df['School'],
                 0
             )
         )
@@ -1143,19 +1148,19 @@ class Helper_travel_cost():
         # Make sure destination fall in Taipei Metropolitan
         survey_df = survey_df.merge(
             town_code_TP.rename(
-                columns={"TOWNCODE": 'TOWNCODE_dest', "TOWNNAME": 'TOWNNAME_dest'}),
+                columns={"TOWNCODE": 'B_TOWNCODE', "TOWNNAME": 'B_TOWNNAME'}),
             left_on='Dest', right_on='code', how='right'
         )
 
         # Specify the columns
         survey_df = survey_df[[
-            'Age', 'Gender', 'TOWNCODE_orig', 'TOWNNAME_orig',
-            'TOWNCODE_dest', 'TOWNNAME_dest', 'Daily_transport'
+            'Age', 'Gender', 'A_TOWNCODE', 'A_TOWNNAME',
+            'B_TOWNCODE', 'B_TOWNNAME', 'Daily_transport'
         ]]
 
         # 下面這個可以看到只有 7534 筆是跨區移動 (total應該是13280筆)
-        # tmp = survey_df[survey_df['TOWNNAME_orig'] != survey_df['TOWNNAME_dest']]
-        # print(tmp[['TOWNNAME_orig', 'TOWNNAME_dest']])
+        # tmp = survey_df[survey_df['A_TOWNCODE'] != survey_df['B_TOWNCODE']]
+        # print(tmp[['A_TOWNNAME', 'B_TOWNNAME']])
 
         # 3. Get the grouped transportation code
         survey_df['Daily_transport'] = survey_df['Daily_transport'].fillna(98)
@@ -1167,17 +1172,17 @@ class Helper_travel_cost():
         # ====================
         #  Check distribution
         # ====================
-        modes_to_check = ['mode', 'coarse_mode', 'public_private']
-        for current_mode in modes_to_check:
-            print(f"Current mode is: {current_mode}")
-            # 3-1 overall mode distribution
-            counts = survey_df[current_mode]\
-                .value_counts().reset_index(name='cnt')
-            counts['pct'] = (counts['cnt'] / counts['cnt'].sum()) * 100
-            counts['pct'] = counts['pct'].round(1)
-            print(">> Overall distribution")
-            print(counts)
-            print(sum(counts['cnt']), sum(counts['pct']))
+        # modes_to_check = ['mode', 'coarse_mode', 'public_private']
+        # for current_mode in modes_to_check:
+        #     print(f"Current mode is: {current_mode}")
+        #     # 3-1 overall mode distribution
+        #     counts = survey_df[current_mode]\
+        #         .value_counts().reset_index(name='cnt')
+        #     counts['pct'] = (counts['cnt'] / counts['cnt'].sum()) * 100
+        #     counts['pct'] = counts['pct'].round(1)
+        #     print(">> Overall distribution")
+        #     print(counts)
+        #     print(sum(counts['cnt']), sum(counts['pct']))
 
             # 3-2 based on origin, get mode distribution
             # counts = survey_df.groupby('TOWNCODE_orig')[current_mode]\
@@ -1190,9 +1195,37 @@ class Helper_travel_cost():
         # ==========================
         #  Get the travle pair data
         # ==========================
-        # expected columns: 'TOWNCODE_orig', 'TOWNNAME_orig', 'TOWNCODE_dest', 'TOWNNAME_dest', 'mode', 'pct'
-        #  Notice: 1. the 'mode' here should be just private and public
-        #          2. if there are < 1 count of sum of counts of private and public, then drop this pair.
+        # NOTE: if there are < 1 count of sum of counts of private and public, then drop this pair.
+        # 1. group by A-B pairs and get the count for public and private
+        pair_result = survey_df.groupby(
+            ['A_TOWNCODE', 'B_TOWNCODE', 'public_private']
+        ).size().reset_index(name='count')
+
+        pair_result = pair_result.pivot(
+            index=['A_TOWNCODE', 'B_TOWNCODE'], 
+            columns='public_private', 
+            values='count'
+        ).fillna(0).reset_index()
+
+        pair_result.columns.name = None  # was 'public_private'
+
+        # pair_result['public_pct'] = pair_result['public'] / (pair_result['public'] + pair_result['private'])
+
+        # 2. turn the dataframe into matrix (but there are missing pairs)
+        full_code = town_code_TP['TOWNCODE'].tolist()
+
+        complete_index = pd.MultiIndex.from_product([full_code, full_code], names=['A_TOWNCODE', 'B_TOWNCODE'])
+        result_full = pair_result.set_index(['A_TOWNCODE', 'B_TOWNCODE']).reindex(complete_index, fill_value=0).reset_index()
+
+        # Create a matrix with A_TOWNCODE as rows and B_TOWNCODE as columns for public_count
+        public_count_matrix = result_full.pivot(index='A_TOWNCODE', columns='B_TOWNCODE', values='public').fillna(0)
+        private_count_matrix = result_full.pivot(index='A_TOWNCODE', columns='B_TOWNCODE', values='private').fillna(0)
+
+        if public_pct_out_fpath:
+            public_count_matrix.to_csv(public_pct_out_fpath, index=False)
+            private_count_matrix.to_csv(private_pct_out_fpath, index=False)
+            return
+        return public_count_matrix, private_count_matrix
 
         # (another option) group by TOWNCODE, count the occurance of codes in Transportation_1-10
         # 但這個方法就是很難定義分母 (不可能是sample size，也許是用all non-na count)
@@ -1352,13 +1385,17 @@ def main():
     )
 
     # Survey data
-    # years = list(range(98, 106))  # ROC 98 ~ 105
-    # htc.process_survey(years=years)
+    years = list(range(98, 106))  # ROC 98 ~ 105
+    htc.process_survey(
+        years=years,
+        public_pct_out_fpath=f"{DATA_PATH}public_mode_cnt.csv",
+        private_pct_out_fpath=f"{DATA_PATH}private_mode_cnt.csv"
+    )
 
     # Combine village to township
-    for m in ['public', 'private']:
-        htc.village_to_township(mode=m, out_fpath=f"{DATA_PATH}{m}_town_travel_mat.csv")
-        print(f"{m} done.")
+    # for m in ['public', 'private']:
+    #     htc.village_to_township(mode=m, out_fpath=f"{DATA_PATH}{m}_town_travel_mat.csv")
+    #     print(f"{m} done.")
 
 if __name__ == "__main__":
     main()
