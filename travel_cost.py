@@ -121,13 +121,25 @@ def main():
         private_travel_mat=private_travel_mat
     )
 
+    public_vill_travel_mat = pd.read_csv(f"{DATA_PATH}public_vill_travel_mat.csv")
+    vills = public_vill_travel_mat.columns
+
+    public_vill_travel_mat = public_vill_travel_mat.values / 60
+    private_vill_travel_mat = pd.read_csv(f"{DATA_PATH}private_vill_travel_mat.csv").values
+    private_vill_travel_mat = private_vill_travel_mat / 60
+
+
     tc = travel_cost(
         optimal_params,
-        public_travel_mat=public_travel_mat,
-        private_travel_mat=private_travel_mat
+        public_travel_mat=public_vill_travel_mat,
+        private_travel_mat=private_vill_travel_mat
     )
 
-    # print(tc)
+    tc = pd.DataFrame(tc, columns=vills)
+
+    print(tc)
+
+    # tc.to_csv(DATA_PATH+"commuting_cost.csv", index=False)
 
 
 if __name__ == "__main__":
