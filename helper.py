@@ -1266,7 +1266,32 @@ def main():
     # h = Helper_tdx()
     # h.data_into_x_splits(2, "JJinTP_data_TW/public_data/", 'rerun_pairs.csv')
 
-    
+
+    # ==========================
+    #  Make village time matrix
+    # ==========================
+    # util = Utils()
+    # public_travel_time_df = pd.read_csv(PUBLIC_PATH+"public_travel_time.csv")
+    # private_travel_time_df = pd.read_csv(PRIVATE_PATH+"private_travel_time.csv")
+
+    # var_args = {
+    #     'A_villcode': 'A_villcode',
+    #     'B_villcode': 'B_villcode',
+    #     'ab_time': 'AB_travel_time',
+    #     'ba_time': 'BA_travel_time'
+    # }
+    # public_mat = util.to_mat(public_travel_time_df, is_half=True, is_same=False, **var_args)
+
+    # var_args = {
+    #     'A_villcode': 'id_orig',
+    #     'B_villcode': 'id_dest',
+    #     'time': 'duration'
+    # }
+    # private_mat = util.to_mat(private_travel_time_df, is_half=True, is_same=True, **var_args)
+
+    # public_mat.to_csv(DATA_PATH+"public_vill_travel_mat.csv", index=False)
+    # private_mat.to_csv(DATA_PATH+"private_vill_travel_mat.csv", index=False)
+
 
     # =============
     #  Public Data
@@ -1376,6 +1401,7 @@ def main():
     #     fpath=PUBLIC_PATH+'travel_walking.csv',
     #     out_fpath=PUBLIC_PATH+'public_travel_time.csv'
     # )
+
 
     # =============
     #  Travel Cost
