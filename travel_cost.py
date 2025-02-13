@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.special import factorial, gammaln
 from scipy.optimize import minimize, basinhopping
+import pyfixest as pf  # for fixed effect, with the option to do ppml
 import math
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -25,8 +26,8 @@ def travel_cost(
     g_pub, g_pri, d_pub, d_pri = params
     v = 1  # constant in current version
 
-    tmp_pub = np.exp((-1) * (d_pub * public_travel_mat - g_pub) / v)
-    tmp_pri = np.exp((-1) * (d_pri * private_travel_mat - g_pri) / v)
+    tmp_pub = np.exp((-1) * (d_pub * public_travel_mat + g_pub) / v)
+    tmp_pri = np.exp((-1) * (d_pri * private_travel_mat + g_pri) / v)
 
     return -v * np.log(tmp_pub + tmp_pri)
 
@@ -50,8 +51,8 @@ def travel_log_likelihood(
     v = 1  # constant in current version
 
     # Probabilities
-    tmp_pub = np.exp((-1) * (d_pub * public_travel_mat - g_pub) / v)
-    tmp_pri = np.exp((-1) * (d_pri * private_travel_mat - g_pri) / v)
+    tmp_pub = np.exp((-1) * (d_pub * public_travel_mat + g_pub) / v)
+    tmp_pri = np.exp((-1) * (d_pri * private_travel_mat + g_pri) / v)
 
     prob_pub_mat = tmp_pub / (tmp_pub + tmp_pri)
     prob_pri_mat = tmp_pri / (tmp_pub + tmp_pri)
@@ -63,10 +64,12 @@ def travel_log_likelihood(
     have_transport_cnt = tot_transport_cnt_mat > 0
 
     # since scipy's factorial cannot work with 0s, use gammaln instead
-    ln_Lt_mat = gammaln(tot_transport_cnt_mat + 1) \
-        - gammaln(private_transport_cnt_mat + 1) \
-        - gammaln(public_transport_cnt_mat + 1) \
-        + private_transport_cnt_mat * np.log(prob_pri_mat) \
+    # ln_Lt_mat = gammaln(tot_transport_cnt_mat + 1) \
+    #     - gammaln(private_transport_cnt_mat + 1) \
+    #     - gammaln(public_transport_cnt_mat + 1) \
+    #     + private_transport_cnt_mat * np.log(prob_pri_mat) \
+    #     + public_transport_cnt_mat * np.log(prob_pub_mat)
+    ln_Lt_mat = private_transport_cnt_mat * np.log(prob_pri_mat) \
         + public_transport_cnt_mat * np.log(prob_pub_mat)
     
     # ln_Lt_mat[have_transport_cnt] => would make the valid (True) values into a list
@@ -98,10 +101,10 @@ def find_param(initial_params, public_travel_mat, private_travel_mat, show_stats
 
     # parameter bounds
     bounds = [
-        (None, 0),  # gamma_public <= 0
-        (None, 0),  # gamma_private <= 0
-        (0, None),  # delta_public <= 0
-        (0, None),  # delta_public <= 0
+        (0, None),  # gamma_public >= 0
+        (0, None),  # gamma_private >= 0
+        (0, None),  # delta_public >= 0
+        (0, None),  # delta_public >= 0
     ]
 
     res = minimize(
@@ -227,6 +230,65 @@ def manual_minimize(
     return opt_param
 
 
+def ek_estimation(commuting_flow_mat: pd.DataFrame, travel_cost_mat: pd.DataFrame):
+    '''
+    The estimation equation is as follows:
+        ln pi_{ij} = epsilon * k * travel_cost_{ij} + orig_FE + dest_FE + error_term.
+    where FE stands for fixed effect, and the goal is to estimate epsilon * k 
+    (the parameter of travel_cost)
+
+    Parameters
+    ----------
+    commuting_flow_mat: pd.DataFrame.
+        the data from survey, assume the order of orig on rows and dest on 
+        columns to be the same.
+    travel_cost_mat: pd.DataFrame.
+        the data result from other functions in this file, assume the order of 
+        orig on rows and dest on columns to be the same.
+
+    Reutrn
+    ------
+    A single number of epsilon * k.
+    '''
+    # Turn the matrices into panel data
+    # turn both of the matrix's columns and rows as the orig and dest.
+    # join the two matrices using orig and dest.
+
+    # 1. Assume the row indices are not locations but having the same order
+    #    as the columns, so set the row indices as the column names.
+    commuting_flow_mat.index = commuting_flow_mat.columns
+    travel_cost_mat.index = travel_cost_mat.columns
+
+    # 2. melt the matrix so that the row and column indices would be two new
+    #    columns, and the entries in the matrix will be the value in the third
+    #    column.
+    cf_melted = commuting_flow_mat.reset_index().melt(
+        id_vars=['orig'], var_name='dest', value_name='commuting_flow'
+    )
+    tc_melted = travel_cost_mat.reset_index().melt(
+        id_vars=['orig'], var_name='dest', value_name='travel_cost'
+    )
+
+    # 3. merge the two data into one panel data for running ppml.
+    panel_data = cf_melted.merge(tc_melted, on=['orig', 'dest'], how='left')
+
+    # (simple check): if there are missing values after merging.
+
+    # 4. PPML
+    # convert location to categorical
+    panel_data['orig'] = panel_data['orig'].astype('category')
+    panel_data['dest'] = panel_data['dest'].astype('category')
+
+    ppml_model = pf.feols(
+        "commuting_flow ~ travel_cost | orig + dest", 
+        data=panel_data, family="poisson"
+    )
+    ppml_model.vcov("cluster", ["orig", "dest"])
+    print(ppml_model.summary())
+
+    return ppml_model.params['travel_cost']
+
+
 def main():
     print("Start getting travel cost...")
 
@@ -246,8 +308,8 @@ def main():
     }
 
     opt = manual_minimize(
-        init_val=-1, 
-        bounds=[-1, -0.01],  # other test: [-99, -1]
+        init_val=1, 
+        bounds=[0.01, 1],  # other test: [1, 99]
         public_travel_mat=public_travel_mat,
         private_travel_mat=private_travel_mat,
         **step_setting
@@ -280,6 +342,10 @@ def main():
     tc_vill = pd.DataFrame(tc_vill, columns=vills)
 
     print(tc_vill)
+
+    # now generate the two matrices the function needed.
+
+    # ek_estimation(commuting_flow_mat, travel_cost_mat)
 
     # tc.to_csv(DATA_PATH+"towns_commuting_cost.csv", index=False)
 
