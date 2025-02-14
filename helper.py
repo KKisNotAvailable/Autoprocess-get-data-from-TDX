@@ -708,6 +708,7 @@ class Helper_public_travel():
     def save_public(self, fpath):
         self.merged_file.to_csv(fpath, index=False)
 
+
 class Helper_travel_cost():
     def __init__(self, calib_path='') -> None:
         calib = pd.read_csv(calib_path)  # 1247
@@ -1031,6 +1032,17 @@ class Helper_travel_cost():
         '''
         This function will read all the raw survey data, clean them, and then
         save the cleaned and merged data to a new file.
+
+        The process is as follows:
+        1. since some of the columns are coded, before processing the data, we 
+           read the code mapping table from the official code book 
+           "變數名稱說明檔_98-105.csv" 
+           (specifically, transit mode and towns are coded)
+        2. then we keep only the towns in the calibration data
+        3. I manually divide the transit modes into public and private
+           (based on our discussion), and the result were saved in a file
+           called "transportation_code.csv"
+        4. when processing survey data, 
         '''
         # From codebook
         # 1. township code at A192:B585 (NTP: 1XX, TP: 22XX)
@@ -1124,14 +1136,14 @@ class Helper_travel_cost():
         # print(f"NaN and 0 (empty string) check:\n{check}")
 
         # 2. get the "TOWNCODE" used in travel cost
-        #    right join to keep only the filtered districts (since town_code_TP was filtered)
+        #    right join to filter residence/start point (align with calibrated towns)
         survey_df = survey_df.merge(
             town_code_TP.rename(
                 columns={"TOWNCODE": 'A_TOWNCODE', "TOWNNAME": 'A_TOWNNAME'}),
             left_on='Residence', right_on='code', how='right'
         )
 
-        # Dest: need only one of work or school to be in Taipei Metropolitan
+        # Dest: need only one of work or school to be in calibrated towns
         survey_df['Dest'] = np.where(
             survey_df['Workplace'].isin(town_code_TP['code']), 
             survey_df['Workplace'],
@@ -1142,10 +1154,10 @@ class Helper_travel_cost():
             )
         )
 
-        # Drop if there are no destination
+        # Drop if there are no destination (== 0)
         survey_df = survey_df[survey_df['Dest'] != 0]
 
-        # Make sure destination fall in Taipei Metropolitan
+        # Make sure destination fall in calibrated towns
         survey_df = survey_df.merge(
             town_code_TP.rename(
                 columns={"TOWNCODE": 'B_TOWNCODE', "TOWNNAME": 'B_TOWNNAME'}),
@@ -1158,7 +1170,7 @@ class Helper_travel_cost():
             'B_TOWNCODE', 'B_TOWNNAME', 'Daily_transport'
         ]]
 
-        # 下面這個可以看到只有 7534 筆是跨區移動 (total應該是13280筆)
+        # the code below shows only 7534 records are cross-township (total record count is 13280)
         # tmp = survey_df[survey_df['A_TOWNCODE'] != survey_df['B_TOWNCODE']]
         # print(tmp[['A_TOWNNAME', 'B_TOWNNAME']])
 
@@ -1211,6 +1223,7 @@ class Helper_travel_cost():
 
         # pair_result['public_pct'] = pair_result['public'] / (pair_result['public'] + pair_result['private'])
 
+        # TODO: the following might be able to use the to_mat function
         # 2. turn the dataframe into matrix (but there are missing pairs)
         full_code = town_code_TP['TOWNCODE'].tolist()
 
@@ -1226,9 +1239,6 @@ class Helper_travel_cost():
             private_count_matrix.to_csv(private_pct_out_fpath, index=False)
             return
         return public_count_matrix, private_count_matrix
-
-        # (another option) group by TOWNCODE, count the occurance of codes in Transportation_1-10
-        # 但這個方法就是很難定義分母 (不可能是sample size，也許是用all non-na count)
 
 
 def TDX_helper():
