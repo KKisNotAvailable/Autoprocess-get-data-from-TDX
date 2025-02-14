@@ -78,18 +78,23 @@ def travel_log_likelihood(
     return -ln_L  # for optimization, using function min but want to find max
 
 
-def find_param(initial_params, public_travel_mat, private_travel_mat, show_stats=True):
+def find_param(
+        initial_params, 
+        public_travel_mat, private_travel_mat, 
+        public_transport_cnt_mat, private_transport_cnt_mat,
+        show_stats=True
+):
+    '''
+    This function...
+    Notice that the transport data is the aggregation of all available years, 
+    since single year matrix might have too many 0s.
+    '''
     g_pub, g_pri = initial_params["gamma_public"], initial_params["gamma_private"]
     d_pub, d_pri = initial_params["delta_public"], initial_params["delta_private"]
     # v = initial_params["v"]
 
     init_param_set = [g_pub, g_pri, d_pub, d_pri]
 
-    # 1. using all year combined survey:
-    public_transport_cnt_mat = pd.read_csv(f"{DATA_PATH}public_mode_cnt.csv").values
-    private_transport_cnt_mat = pd.read_csv(f"{DATA_PATH}private_mode_cnt.csv").values
-
-    # 2. start optimizing
     # constraints example
     constraints = [
         {'type': 'ineq', 'fun': lambda params: params[0] + params[1] + params[2] - 1},  # x + y + z >= 1
@@ -151,6 +156,7 @@ def find_param(initial_params, public_travel_mat, private_travel_mat, show_stats
 def manual_minimize(
     init_val: float, bounds: list, 
     public_travel_mat, private_travel_mat,
+    public_transport_cnt_mat, private_transport_cnt_mat,
     show_plot=False, **step_settings
 ):
     '''
@@ -207,20 +213,22 @@ def manual_minimize(
 
         optimal_params, lkh = find_param(
             params,
-            public_travel_mat=public_travel_mat,
+            public_travel_mat=public_travel_mat, 
             private_travel_mat=private_travel_mat,
+            public_transport_cnt_mat=public_transport_cnt_mat,
+            private_transport_cnt_mat=private_transport_cnt_mat,
             show_stats=False
         )
 
         record.append({'params': optimal_params, 'lkh': lkh})
 
-    srs = [(rec['lkh'] - 1639.58845) * 1000000 for rec in record]
-    srs = [val for val in srs if val < 3]
+    srs = [(rec['lkh'] - 8725.91983) * 1000000 for rec in record]  # for display agjustment, past: 1639.58845
+    # srs = [val for val in srs if val < 3]  # for display agjustment
 
     if show_plot:
         plt.plot(srs, marker='o', markersize=3, linestyle='-', color='black', label='Series')
         # plt.xticks(ticks=range(len(srs)), labels=test_vals, fontsize=8)
-        plt.ylim(2.4605, 2.4615)
+        plt.ylim(3.5, 4.5)  # for display agjustment, past: (2.4605, 2.4615)
         plt.xticks(ticks=[0, len(srs)-1], labels=[min(test_vals), max(test_vals)], fontsize=8)
         plt.grid(axis='y', linestyle='--', alpha=0.7)  # "True" for both direction
         plt.show()
@@ -292,6 +300,11 @@ def ek_estimation(commuting_flow_mat: pd.DataFrame, travel_cost_mat: pd.DataFram
 def main():
     print("Start getting travel cost...")
 
+    # Transit mode count from survey data 
+    # (also serve as commuting flow when aggregated by orig and dest)
+    public_transport_cnt = pd.read_csv(f"{DATA_PATH}public_mode_cnt.csv")
+    private_transport_cnt = pd.read_csv(f"{DATA_PATH}private_mode_cnt.csv")
+
     public_travel_mat = pd.read_csv(f"{DATA_PATH}public_town_travel_mat.csv")
     towns = public_travel_mat.columns
 
@@ -300,30 +313,25 @@ def main():
     private_travel_mat = private_travel_mat / 60
 
     # Manual search for 'global' minimum 
-    # (tested on the range of -99 ~ -1 ~ -0.01, and found the minimum is more
-    # likely lies in -1~-0.01, based on the plot of the likelihood values)
+    # (tested on the range of 0.01 ~ 1 ~ 99, and found the minimum is more
+    # likely lies in 0.01 ~ 1, based on the plot of the likelihood values)
     step_setting = {
-        "step_size": 0.01,  # other test: 1
+        "step_size": 0.01,  # other test: 0.01, 1
         "step_method": '+'
     }
 
     opt = manual_minimize(
         init_val=1, 
-        bounds=[0.01, 1],  # other test: [1, 99]
+        bounds=[0.01, 1],  # other test: [0.01, 1], [1, 99]
         public_travel_mat=public_travel_mat,
         private_travel_mat=private_travel_mat,
+        public_transport_cnt_mat=public_transport_cnt.values,
+        private_transport_cnt_mat=private_transport_cnt.values,
+        show_plot=True,
         **step_setting
     )
+
     optimal_params = opt['params']
-
-
-    public_vill_travel_mat = pd.read_csv(f"{DATA_PATH}public_vill_travel_mat.csv")
-    vills = public_vill_travel_mat.columns
-
-    public_vill_travel_mat = public_vill_travel_mat.values / 60
-    private_vill_travel_mat = pd.read_csv(f"{DATA_PATH}private_vill_travel_mat.csv").values
-    private_vill_travel_mat = private_vill_travel_mat / 60
-
 
     tc_town = travel_cost(
         optimal_params,
@@ -333,6 +341,18 @@ def main():
 
     tc_town = pd.DataFrame(tc_town, columns=towns)
 
+    # now generate the two matrices the function needed.
+
+    # ek_estimation(commuting_flow_mat, travel_cost_mat)
+
+    # For village level
+    public_vill_travel_mat = pd.read_csv(f"{DATA_PATH}public_vill_travel_mat.csv")
+    vills = public_vill_travel_mat.columns
+
+    public_vill_travel_mat = public_vill_travel_mat.values / 60
+    private_vill_travel_mat = pd.read_csv(f"{DATA_PATH}private_vill_travel_mat.csv").values
+    private_vill_travel_mat = private_vill_travel_mat / 60
+
     tc_vill = travel_cost(
         optimal_params,
         public_travel_mat=public_vill_travel_mat,
@@ -340,12 +360,6 @@ def main():
     )
 
     tc_vill = pd.DataFrame(tc_vill, columns=vills)
-
-    print(tc_vill)
-
-    # now generate the two matrices the function needed.
-
-    # ek_estimation(commuting_flow_mat, travel_cost_mat)
 
     # tc.to_csv(DATA_PATH+"towns_commuting_cost.csv", index=False)
 
