@@ -1270,10 +1270,17 @@ def main():
     # Actually, the following part should be written in python notebook, 
     # because in that form, we can write notes and seperately run code blocks.
 
-    # ============
-    #  Split Data
-    # ============
+    # ==============
+    #  Data for TDX
+    # ==============
     # h = Helper_tdx()
+
+    # Because retrieving data from TDX routing service has daily upper limit
+    # and limit on call times per second, we have to split the pairs into 
+    # pieces accordingly.
+    # When I first do this, the limit was
+    #     daily: <= 200,000 calls
+    # frequency: <= 4 calls / sec.
     # h.data_into_x_splits(2, "JJinTP_data_TW/public_data/", 'rerun_pairs.csv')
 
 
