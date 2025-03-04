@@ -52,14 +52,14 @@ class MockResponse:
 class TDX_retriever():
     def __init__(
         self,
-        app_id, app_key,
+        client_id, client_secret,
         log_path: str = "./log/",
         add_villcode: bool = False,
         auth_url="https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
         url="https://tdx.transportdata.tw/api/maas/routing?"
     ):
-        self.__app_id = app_id
-        self.__app_key = app_key
+        self.__client_id = client_id
+        self.__client_secret = client_secret
         self.__add_villcode = add_villcode
         self.auth_url = auth_url
         self.url = url
@@ -110,8 +110,8 @@ class TDX_retriever():
         return {
             'content-type': content_type,
             'grant_type': grant_type,
-            'client_id': self.__app_id,
-            'client_secret': self.__app_key
+            'client_id': self.__client_id,
+            'client_secret': self.__client_secret
         }
 
     def _get_data_header(self) -> dict:
@@ -276,6 +276,10 @@ class TDX_retriever():
             looks like [24, 121].
         coord_to: list.
             looks like [24, 121].
+        get_demo: bool.
+            if wish to save the TDX respond for reference. We recommend only
+            allow this when trying get the result for a single pair of points.
+            Default saved to folder "output" as "result_example.json".
 
         Return
         ------
@@ -520,8 +524,8 @@ def main():
 
     with open(api_filepath) as f:
         ps_info = json.load(f)
-    app_id = ps_info['app_id']
-    app_key = ps_info['app_key']
+    client_id = ps_info['client_id']
+    client_secret = ps_info['client_secret']
 
     out_path = "./output/"
     if not os.path.isdir(out_path):
@@ -532,7 +536,7 @@ def main():
     # ===================================================
     # Get single point DEMO: using get_transport_result()
     # ===================================================
-    # TDX = TDX_retriever(app_id, app_key)
+    # TDX = TDX_retriever(client_id, client_secret)
     # test_single(TDX)
     # return
 
@@ -549,7 +553,7 @@ def main():
         # "6pm": "T18:00:00"
     }
     for k, t in time_table.items():
-        TDX = TDX_retriever(app_id, app_key, add_villcode=True)
+        TDX = TDX_retriever(client_id, client_secret, add_villcode=True)
         # TDX._auth_tester()
         get_multi(
             TDX, centroids, k, t,
