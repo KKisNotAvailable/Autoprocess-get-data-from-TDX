@@ -58,7 +58,7 @@ class Utils():
         '''
         If upper triangle and lower triangle have different value, two columns
         will be generated.
-        Note that the diagonal of the matrix will be ignored. 
+        Note that the diagonal of the matrix will be ignored.
         => This might be modified for other purposes.
         '''
         rows, cols = np.triu_indices(len(index_list), k=1)
@@ -161,7 +161,7 @@ class Helper_tdx():
     def data_into_x_splits(self, x: int, file_path: str, infile: str):
         '''
         Split the paired data into sub files, since the TDX server does not support
-        accessing more than 200,000 times a day, and there are about 800,000 rows 
+        accessing more than 200,000 times a day, and there are about 800,000 rows
         in our paired list, each row will trigger 2 times of access to the server.
         '''
         df = pd.read_csv(file_path+infile)
@@ -181,7 +181,7 @@ class Helper_tdx():
 
     def task_generator(self, file_list: list = [1], keys: int = 1):
         '''
-        This method generates the task file in vscode, so we don't 
+        This method generates the task file in vscode, so we don't
         need to manually open several terminals and type the commands.
         '''
         sub_task_cnt = len(file_list)
@@ -226,23 +226,325 @@ class Helper_tdx():
 
 
 class Helper_public_travel():
-    def __init__(self, out_path=OUT_PATH, calib_path='', centroid_path='') -> None:
-        self.__out_path = out_path
+    def __init__(self, calib_path='', centroid_path='', public_merged_fname='') -> None:
         self.__rerun_pairs = deque()  # will be used as FIFO, append and popleft
 
-        calib = pd.read_csv(calib_path)  # 1247
+        calib = pd.read_csv(calib_path, dtype={'VILLCODE': 'str'})  # 1247
         calib = calib[['VILLCODE', 'area', 'employment',
                        'population', 'TOWNNAME', 'VILLNAME']]
         self.__calib = calib
 
         # VILLCODE,lon,lat
-        centroids = pd.read_csv(centroid_path)
+        centroids = pd.read_csv(centroid_path, dtype={"VILLCODE": 'str'})
         self.__centroids = centroids
 
+        self.__pfname = public_merged_fname
+
+    def __check_centroid_changed_cnt(self):
+        '''
+        After manully checking with google maps, centroids of some of
+        the villages were re-assigned. Thus, this function is to check
+        if the recorded changed villages is the same amount as the centroid.
+        '''
+        # from the problem.vill.csv => get '重訂座標'
+        record_df = pd.read_csv(OUT_PATH+'problem_vills.csv')
+        print(sum(record_df['OPERATION'] == '重訂座標'))
+
+        # from village_centroid_TP.csv => get the shorter lon lat
+        centroids_df = pd.read_csv(
+            f'{DATA_PATH}Routing/village_centroid_TP.csv', dtype={'lon': 'str'})
+        print(sum(centroids_df['lon'].map(len) < 12))
+
+        # Both are 57
+
+    def merge_public_files(
+        self, source_path: str, out_path: str = '',
+        start_time="6pm", file_cnt=20
+        ):
+        '''
+        This function will merge the series of files from 1 to 'file_cnt'
+        with the stated 'start_time'. Save to file if the out_path is
+        provided.
+
+        Parameters
+        ----------
+        source_path: str.
+            The folder holds all of the TDX respond to sub-files.
+        out_path: str.
+            The folder we save the merged file.
+        start_time: str
+            This is the departure time for public transportation,
+            only 6pm and 10am available.
+        file_cnt: int
+            The number of files needed to be merged.
+
+        Return
+        ------
+            None or pd.DataFrame, which is the merged data.
+        '''
+        out_file = os.path.join(out_path, self.__pfname)
+
+        if os.path.exists(out_file):
+            print(
+                f'The file already exists in {out_path}, skipping this step...')
+            return
+
+        file_paths = [
+            os.path.join(source_path, f"travel_at_{start_time}_{s}.csv")
+            for s in range(1, file_cnt+1)
+        ]
+
+        # Load, concatenate, and save as a single file
+        df = pd.concat([pd.read_csv(f) for f in file_paths], axis=0)
+
+        if not out_path:
+            return df
+        df.to_csv(out_file, index=False)
+        return
+
+    def get_missing_pairs(self, stacked_public_path: str, walking_fpath: str):
+        '''
+        This function is to get the missing pairs during the get TDX process,
+        which might be because of unstable connection. As a result, we use the
+        walking data to recover the missing pairs.
+        '''
+        # Read in the data (merged public and walking data for reference)
+        stacked_fpath = os.path.join(stacked_public_path, self.__pfname)
+        stacked = pd.read_csv(
+            stacked_fpath,
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+        column_order = stacked.columns
+
+        walk = pd.read_csv(
+            walking_fpath,
+            usecols=['id_orig', 'id_dest'],
+            dtype={'id_orig': 'str', 'id_dest': 'str'}
+        )
+
+        # Remove duplicate pair
+        # note that the situation of (A,B) = (2,3) and (3,2) should not exist
+        # because of how we constructed the travel pairs.
+        # should they exist, they will be treated as the same pair, thus one
+        # of them will be dropped.
+        # the idea of the following code is to make sure smaller id as idA
+        stacked[['idA_norm', 'idB_norm']] = pd.DataFrame(
+            list(map(sorted, zip(stacked['A_villcode'], stacked['B_villcode']))),
+            index=stacked.index
+        )
+        stacked['id_norm'] = stacked['idA_norm'] + stacked['idB_norm']
+        stacked = stacked.drop_duplicates(subset=['id_norm'])
+
+        # Compare with walking to recover the missing pairs
+        walk[['idA_norm', 'idB_norm']] = pd.DataFrame(
+            list(map(sorted, zip(walk['id_orig'], walk['id_dest']))),
+            index=walk.index
+        )
+        walk['id_norm'] = walk['idA_norm'] + walk['idB_norm']
+
+        lost_keys = set(walk['id_norm']) - set(stacked['id_norm'])
+        print("There are", len(lost_keys), "missing pairs...")
+
+        # Fill the restored pairs with Na value
+        walk = walk.drop(columns=['id_norm', 'id_orig', 'id_dest'])
+        stacked = stacked.drop(columns=['id_norm', 'A_villcode', 'B_villcode'])
+
+        complete_data = walk.merge(stacked, on=['idA_norm', 'idB_norm'], how='left')
+
+        complete_data = complete_data.rename(columns={
+            "idA_norm": 'A_villcode', "idB_norm": 'B_villcode'
+        })
+
+        complete_data.sort_values(
+            by=['A_villcode', 'B_villcode'], ascending=[True, True],
+            inplace=True
+        )
+
+        # The following code does two things:
+        # 1. give the missing pairs the coordinates
+        # 2. deal with the origin and destination swap after sorting location id
+        #    -> because public data A->B and B->A has different travel time
+        complete_data = complete_data.merge(
+            self.__centroids.rename(columns={
+                "VILLCODE": 'A_villcode', "lon": 'A_lon_new', "lat": 'A_lat_new'}),
+            on='A_villcode', how='left'
+        )
+        complete_data = complete_data.merge(
+            self.__centroids.rename(columns={
+                "VILLCODE": 'B_villcode', "lon": 'B_lon_new', "lat": 'B_lat_new'}),
+            on='B_villcode', how='left'
+        )
+        # if point A not the same and not empty then swap the value of 'AB_time' and 'BA_time', else skip
+        cond_swap = (
+            (complete_data['A_lat'].notna()) &
+            (complete_data['A_lat'] != complete_data['A_lat_new']) |
+            (complete_data['A_lon'] != complete_data['A_lon_new'])
+        )
+
+        ab_cols = ['AB_travel_time', 'AB_ttl_cost', 'AB_transfer_cnt', 'AB_route']
+        ba_cols = ['BA_travel_time', 'BA_ttl_cost', 'BA_transfer_cnt', 'BA_route']
+        complete_data.loc[cond_swap, ab_cols + ba_cols] = complete_data.loc[cond_swap, ba_cols + ab_cols].values
+
+        # Keep the new lon and lat
+        name_map = {
+            'A_lon_new': 'A_lon', 'A_lat_new': 'A_lat',
+            'B_lon_new': 'B_lon', 'B_lat_new': 'B_lat'
+        }
+        complete_data = complete_data.drop(columns=name_map.values())
+        complete_data = complete_data.rename(columns=name_map)
+
+        complete_data = complete_data[column_order]
+
+        # Replace the original merged files
+        complete_data.to_csv(stacked_fpath, index=False)
+        print("Missing pairs restored.")
+
+    def calibrate_counties_used(self, stacked_public_path: str):
+        '''
+        This function use the calibration data to clean the county pairs.
+        We keep only the pairs that both counties are in the calib data.
+        '''
+        stacked_fpath = os.path.join(stacked_public_path, self.__pfname)
+        stacked = pd.read_csv(
+            stacked_fpath,
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+
+        calib_couty_list = self.__calib['VILLCODE']
+
+        stacked = stacked[stacked['A_villcode'].isin(calib_couty_list)]
+        stacked = stacked[stacked['B_villcode'].isin(calib_couty_list)]
+
+        print(stacked.shape)
+
+        stacked.to_csv(stacked_fpath, index=False)
+
+    def fill_with_walk(self, stacked_public_path: str, walking_fpath: str, t_limit_minute=30):
+        '''
+        This function only cares about the entries that has walking time less
+        than t_limit_minute minutes.
+        '''
+        lim = t_limit_minute * 60
+
+        stacked_fpath = os.path.join(stacked_public_path, self.__pfname)
+        stacked = pd.read_csv(
+            stacked_fpath,
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+
+        walk = pd.read_csv(
+            walking_fpath,
+            usecols=['id_orig', 'id_dest', 'duration'],
+            dtype={'id_orig': 'str', 'id_dest': 'str'}
+        )
+        walk = walk[walk['duration'] < lim]
+
+        walk[['A_villcode', 'B_villcode']] = pd.DataFrame(
+            list(map(sorted, zip(walk['id_orig'], walk['id_dest']))),
+            index=walk.index
+        )
+        # NOTE: the stacked data does not require this step, since the villcode
+        # are already in order (in the get_missing_pairs)
+
+        walk = walk[['A_villcode', 'B_villcode', 'duration']]
+
+        stacked = stacked.merge(walk, on=['A_villcode', 'B_villcode'], how='left')
+
+        # Care only the rows with non empty 'duration'
+        # if 'AB_time' is empty, then fill with 'duration', same for 'BA'
+        cond = stacked['duration'].notna()
+        stacked.loc[cond, 'AB_travel_time'] = stacked.loc[cond, 'AB_travel_time'].fillna(stacked.loc[cond, 'duration'])
+        stacked.loc[cond, 'BA_travel_time'] = stacked.loc[cond, 'BA_travel_time'].fillna(stacked.loc[cond, 'duration'])
+
+        stacked = stacked.drop(columns=['duration'])
+
+        stacked.to_csv(stacked_fpath, index=False)
+
+    def get_rerun_pairs(
+            self, data_path: str, data_fname: str,
+            out_path: str, target_time: str
+        ):
+        '''
+        This function gets pairs with *ONE* of the directions missing for
+        rerunning TDX.
+        '''
+        data = pd.read_csv(
+            os.path.join(data_path, data_fname),
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+
+        cond = (data['AB_travel_time'].isna()) | (data['BA_travel_time'].isna())
+
+        keep_cols = ['A_villcode', 'B_villcode', 'A_lat', 'A_lon', 'B_lat', 'B_lon']
+        to_rerun = data.loc[cond, keep_cols]
+
+        to_rerun.to_csv(os.path.join(out_path, f"rerun_TDX_{target_time}.csv"), index=False)
+
+    def get_manual_check(self, data_path: str, data_fname: str, out_path: str):
+        '''
+        This function grabs the pairs with missing values in *BOTH* directions.
+        The ones with only one direction missing would be filled with the
+        travel time of the opposite direction.
+        '''
+        data = pd.read_csv(
+            os.path.join(data_path, data_fname),
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+
+        cond = (data['AB_travel_time'].isna()) & (data['BA_travel_time'].isna())
+
+        to_man_check = data.loc[cond]
+
+        fpath = os.path.join(out_path, "fill_manual_check.csv")
+        if not os.path.exists(fpath):
+            to_man_check.to_csv(fpath, index=False)
+        else:
+            print(f"Manual check file already exists, skipping save...")
+
+    def make_public_main(
+            self, stacked_public_path: str, fill_file_path: str,
+            fill_file_list, out_path: str
+        ):
+        '''
+        This function reads in all of the fill files and merge with the main
+        data. After merging, save the data to destination Main.
+        Also, there might exist some of the pairs with missing travel time in
+        one of the directions, fill them with the opposite direction.
+        '''
+        data_spec = {'A_villcode': 'str', 'B_villcode': 'str'}
+
+        stacked_fpath = os.path.join(stacked_public_path, self.__pfname)
+        stacked = pd.read_csv(stacked_fpath, dtype=data_spec)
+        stacked['key'] = stacked['A_villcode'] + stacked['B_villcode']
+        stacked.set_index('key', inplace=True)
+
+        for ff in fill_file_list:
+            cur_fpath = os.path.join(fill_file_path, ff)
+            cur_fill = pd.read_csv(cur_fpath, dtype=data_spec)
+            cur_fill['key'] = cur_fill['A_villcode'] + cur_fill['B_villcode']
+            cur_fill.set_index('key', inplace=True)
+
+            # since they share the same key and we want to replace the old data
+            # with the fill files, update is the most efficient way
+            stacked.update(cur_fill)
+
+        # check if there are missing in both direction
+        cond_miss_two = (stacked['AB_travel_time'].isna()) & \
+                        (stacked['BA_travel_time'].isna())
+        check1 = stacked[cond_miss_two]
+        print("There are", check1.shape[0], "pairs with missing.")
+
+        # fill missing with reverse direction
+        stacked['AB_travel_time'] = stacked['AB_travel_time'].fillna(stacked['BA_travel_time'])
+        stacked['BA_travel_time'] = stacked['BA_travel_time'].fillna(stacked['AB_travel_time'])
+
+        stacked.to_csv(os.path.join(out_path, "public_travel_time.csv"), index=False)
+
+# ==============================================================
     def _public_data_check(self, fpath, is_both_empty=False):
         '''
-        Mainly generates to files for centroid validity check: 
-        1. public_problem_pairs: for checking and later extract pairs to get public 
+        Mainly generates to files for centroid validity check:
+        1. public_problem_pairs: for checking and later extract pairs to get public
                                  travel time again
         2. problem_vills_list: renamed to problem_vills after I've done the centroid review
 
@@ -251,19 +553,19 @@ class Helper_public_travel():
         fpath: str.
             the public data file path.
         calib_info: pd.DataFrame.
-            the calibration data contains filtered list of villages, we need the 
+            the calibration data contains filtered list of villages, we need the
             VILLCODE and the village's chinese name for manual checking
 
         Return
         ------
             None
         '''
-        # TODO: split the check problem and generate problem centroid into two 
+        # TODO: split the check problem and generate problem centroid into two
         #       functions
         calib_info = self.__calib
 
         # since both set and list are not hashable, turn the sorted list into string
-        data = pd.read_csv(fpath)
+        data = pd.read_csv(fpath, dtype={'A_villcode': 'str', 'B_villcode': 'str'})
         data = data[['A_villcode', 'B_villcode', 'AB_travel_time', 'BA_travel_time']]
         data['point_set'] = [",".join(map(str, sorted(pair))) for pair in zip(data['A_villcode'], data['B_villcode'])]
 
@@ -341,119 +643,9 @@ class Helper_public_travel():
         # The renewed cnetroids are in another file.
         # problem_vills.to_csv(OUT_PATH+"problem_vills_list.csv", index=False)
 
-    def _check_centroid_changed_cnt(self):
-        '''
-        After manully checking with google maps, centroids of some of 
-        the villages were re-assigned. Thus, this function is to check
-        if the recorded changed villages is the same amount as the centroid.
-        '''
-        # from the problem.vill.csv => get '重訂座標'
-        record_df = pd.read_csv(OUT_PATH+'problem_vills.csv')
-        print(sum(record_df['OPERATION'] == '重訂座標'))
-
-        # from village_centroid_TP.csv => get the shorter lon lat
-        centroids_df = pd.read_csv(
-            f'{DATA_PATH}Routing/village_centroid_TP.csv', dtype={'lon': 'str'})
-        print(sum(centroids_df['lon'].map(len) < 12))
-
-        # Both are 57
-
-    def _get_missing_pairs(self, stacked_public_fpath: str, walking_fpath: str, out_fpath: str, split=2):
-        '''
-        This function is to get the missing pairs during the get TDX process.
-        I have no idea why this happened. The original subfiles have the correct
-        count, but sub 8 and 9, no matter at depart time 10am or 6pm, both have 
-        the same missing amount.
-        As a result, we are calibrating using the walking data to get the 
-        missing pairs.
-        '''
-        stacked = pd.read_csv(
-            stacked_public_fpath, 
-            # usecols=['A_villcode','B_villcode','A_lat','A_lon','B_lat','B_lon'],
-            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
-        )
-        stacked['key1'] = stacked['A_villcode'] + stacked['B_villcode']
-        stacked['key2'] = stacked['B_villcode'] + stacked['A_villcode']
-
-        walk = pd.read_csv(
-            walking_fpath,
-            usecols=['id_orig','lon_orig','lat_orig','id_dest','lon_dest','lat_dest'],
-            dtype={'id_orig': 'str', 'id_dest': 'str'}
-        )
-        walk['key'] = walk['id_orig'] + walk['id_dest']
-
-        lost_keys = list(set(walk['key']) - set(stacked['key2']))
-
-        # print(len(lost_keys)) # 44572
-
-        lost_pairs = walk[walk['key'].isin(lost_keys)]
-
-        # rename the columns (same as public data) for rerun TDX
-        name_map = {
-            'id_orig': 'A_villcode','lon_orig': 'A_lon','lat_orig': 'A_lat',
-            'id_dest': 'B_villcode','lon_dest': 'B_lon','lat_dest': 'B_lat'
-        }
-        lost_pairs = lost_pairs[name_map.keys()].rename(columns=name_map)
-        
-        if split > 1:
-            for i, sub in enumerate(np.array_split(lost_pairs, split)):
-                cur_name = out_fpath.replace('.csv', '') + f'_{i+1}.csv'
-                sub.to_csv(cur_name, index=False)
-        else:
-            lost_pairs.to_csv(out_fpath, index=False)
-
-        # ==================
-        #  Additional Check
-        # ==================
-        # 1. There are duplicates in the public
-        # value_counts = stacked['key2'].value_counts()
-        # duplicates = value_counts[value_counts > 1]
-        # print(duplicates) # 36468
-
-        # 2. check if the duplicates have the same data => Yes
-        # print(stacked.loc[stacked['key2'] == '6500002007365000070012', ['AB_travel_time', 'BA_travel_time']])
-
-    def merge_public_files(
-        self, source_path, out_path="",
-        start_time="6pm", file_cnt=20
-    ):
-        '''
-        This function will merge the series of files from 1 to 'file_cnt'
-        with the stated 'start_time' and directly save to file.
-
-        columns: A_villcode,B_villcode,A_lat,A_lon,B_lat,B_lon,AB_travel_time,
-                 AB_ttl_cost,AB_transfer_cnt,AB_route,BA_travel_time,BA_ttl_cost,
-                 BA_transfer_cnt,BA_route
-
-        Parameters
-        ----------
-        start_time: str
-            This is the departure time for public transportation, 
-            only 6pm and 10am available.
-        file_cnt: int
-            The number of files needed to be merged.
-        '''
-        if not out_path:
-            out_path = self.__out_path
-
-        out_file = f"{out_path}merged_public_{start_time}.csv"
-
-        if os.path.exists(out_file):
-            print(
-                f'The file already exists in {out_path}, skipping this step...')
-            return
-
-        file_paths = [
-            f"{source_path}travel_at_{start_time}_{s}.csv" for s in range(1, file_cnt+1)]
-
-        # Load, concatenate, and save as a single file
-        df = pd.concat([pd.read_csv(f) for f in file_paths], axis=0)
-        df.to_csv(out_file, index=False)
-        return
-
     def get_recentered_list(self, problem_vills_fpath, out_fpath):
         '''
-        In the problem_vills file, OPERATION is used to recognize the 
+        In the problem_vills file, OPERATION is used to recognize the
         recentered villages. This function will directly generates file
         as the out_fpath.
 
@@ -471,13 +663,13 @@ class Helper_public_travel():
         data = data[data['OPERATION'] == '重訂座標'].reset_index(drop=True)
         data['VILLCODE'].to_csv(out_fpath, index=False)
 
-    def get_rerun_pairs(
-            self, problem_vills_fpath, problem_pairs_fpath, recentered_fpath, 
-            out_fpath, include_recenter_pairs_in_rerun=True, 
+    def get_rerun_pairs_old(
+            self, problem_vills_fpath, problem_pairs_fpath, recentered_fpath,
+            out_fpath, include_recenter_pairs_in_rerun=True,
             exclude_recenter_pairs_in_probpair=True
         ):
         '''
-        This function generates the pairs for TDX to rerun from the 
+        This function generates the pairs for TDX to rerun from the
         public_problem_pairs.csv
 
         Parameters
@@ -489,20 +681,20 @@ class Helper_public_travel():
         recentered_fpath: str.
             the file to locate the recentered_list.csv, generated from problem_vills_fpath
         include_recenter_pairs_in_rerun: bool.
-            to decide whether to include the pairs including recentered 
-            points. If False then only the non-recentered pairs in the 
+            to decide whether to include the pairs including recentered
+            points. If False then only the non-recentered pairs in the
             public_problem_pairs.csv would be rerun.
         exclude_recenter_pairs_in_probpair: bool.
-            to decide whether the pairs in the problem pairs including recentered 
+            to decide whether the pairs in the problem pairs including recentered
             points need to be excluded.
-            
+
         Return
         ------
             None.
         '''
         # A_villcode,B_villcode,AB_travel_time,BA_travel_time,name_A,name_B,walking_time
         rerun_pairs = pd.read_csv(
-            problem_pairs_fpath, 
+            problem_pairs_fpath,
             dtype={'A_villcode': 'str', 'B_villcode': 'str'}
         )
 
@@ -627,8 +819,8 @@ class Helper_public_travel():
     def add_rerun_pairs(self, rerun_fpath):
         '''
         Currently, we have three versions of rerun pairs:
-        v1 is the version for recentered and empty results from the original 
-           file, used 12pm as departure time. 
+        v1 is the version for recentered and empty results from the original
+           file, used 12pm as departure time.
            (the recentered villages were selected based on their frequency)
         v2 is the empty results from v1, used 11:30 am as departure time.
         v3 is the empty results from v2. Notice that these pairs could not get
@@ -644,7 +836,7 @@ class Helper_public_travel():
         # 1. remove duplicate (just to double check)
         cur_rerun = cur_rerun.drop_duplicates(subset='key1')
 
-        self.__rerun_pairs.append(cur_rerun)        
+        self.__rerun_pairs.append(cur_rerun)
 
         # get file name
         matches = re.findall(r'/([^/.]*)\.', rerun_fpath)
@@ -656,10 +848,10 @@ class Helper_public_travel():
         walk_data = walk_data[['id_orig', 'id_dest', 'duration']]
 
         all_vills = sorted(set(walk_data['id_orig']).union(walk_data['id_dest']))
-        
+
         # 1. make the walking and public data into a matrix with index sorted.
         util = Utils()
-        
+
         walk_args = {
             'A_villcode': 'id_orig',
             'B_villcode': 'id_dest',
@@ -1002,7 +1194,7 @@ class Helper_travel_cost():
 
         town_travel_times = pd.concat(
             township_travel_dfs, ignore_index=True)  # 961
-        
+
         # sort town_a and town_b for clear matrix demonstration
         town_travel_times = town_travel_times.sort_values(
             by=['town_a', 'town_b'], ascending=[True, True]
@@ -1010,7 +1202,7 @@ class Helper_travel_cost():
 
         town_time_mat = town_travel_times.pivot_table(
             index='town_a', columns='town_b', values='time', fill_value=0)
-        
+
         # Check if there are 0 or nan in the matrix (actually still dataframe)
         has_zero = (town_time_mat == 0).any().any()
         has_nan = town_time_mat.isnull().any().any()
@@ -1024,8 +1216,8 @@ class Helper_travel_cost():
         return town_time_mat
 
     def process_survey(
-            self, 
-            years: list, 
+            self,
+            years: list,
             public_pct_out_fpath: str = '',
             private_pct_out_fpath: str = ''
     ):
@@ -1034,15 +1226,15 @@ class Helper_travel_cost():
         save the cleaned and merged data to a new file.
 
         The process is as follows:
-        1. since some of the columns are coded, before processing the data, we 
-           read the code mapping table from the official code book 
-           "變數名稱說明檔_98-105.csv" 
+        1. since some of the columns are coded, before processing the data, we
+           read the code mapping table from the official code book
+           "變數名稱說明檔_98-105.csv"
            (specifically, transit mode and towns are coded)
         2. then we keep only the towns in the calibration data
         3. I manually divide the transit modes into public and private
            (based on our discussion), and the result were saved in a file
            called "transportation_code.csv"
-        4. when processing survey data, 
+        4. when processing survey data,
         '''
         # From codebook
         # 1. township code at A192:B585 (NTP: 1XX, TP: 22XX)
@@ -1145,10 +1337,10 @@ class Helper_travel_cost():
 
         # Dest: need only one of work or school to be in calibrated towns
         survey_df['Dest'] = np.where(
-            survey_df['Workplace'].isin(town_code_TP['code']), 
+            survey_df['Workplace'].isin(town_code_TP['code']),
             survey_df['Workplace'],
             np.where(
-                survey_df['School'].isin(town_code_TP['code']), 
+                survey_df['School'].isin(town_code_TP['code']),
                 survey_df['School'],
                 0
             )
@@ -1214,8 +1406,8 @@ class Helper_travel_cost():
         ).size().reset_index(name='count')
 
         pair_result = pair_result.pivot(
-            index=['A_TOWNCODE', 'B_TOWNCODE'], 
-            columns='public_private', 
+            index=['A_TOWNCODE', 'B_TOWNCODE'],
+            columns='public_private',
             values='count'
         ).fillna(0).reset_index()
 
@@ -1267,7 +1459,7 @@ def TDX_helper():
 
 
 def main():
-    # Actually, the following part should be written in python notebook, 
+    # Actually, the following part should be written in python notebook,
     # because in that form, we can write notes and seperately run code blocks.
 
     # ==============
@@ -1276,7 +1468,7 @@ def main():
     # h = Helper_tdx()
 
     # Because retrieving data from TDX routing service has daily upper limit
-    # and limit on call times per second, we have to split the pairs into 
+    # and limit on call times per second, we have to split the pairs into
     # pieces accordingly.
     # When I first do this, the limit was
     #     daily: <= 200,000 calls
@@ -1333,14 +1525,14 @@ def main():
     # ---- Start Checking result from TDX ----
     # 1. Main files
     # hpt._public_data_check(fpath=f"{PUBLIC_PATH}merged_public.csv")
-    # TODO: 
+    # TODO:
     # * type out all the checking and rerun steps
     # 1. can set whether to generate problem pairs and problem village list
     # 2. self define the generated file suffixes (or file name)
     # 3. the merge public function want to be able to merge given set of files. (eg. my rerun results)
     # hpt._public_data_check(fpath=f"{PUBLIC_PATH}rerun_public_results_v2_1.csv")
     # hpt._public_data_check(fpath=f"{PUBLIC_PATH}rerun_public_results_v2_2.csv")
-    
+
     # This generates rerun pairs for recentered centroids
     # hpt.get_rerun_pairs(
     #     problem_vills_fpath=f'{OUT_PATH}problem_vills.csv',
@@ -1361,7 +1553,7 @@ def main():
     #         out_fpath=f'{PUBLIC_PATH}rerun_pairs_v3_{i}.csv'
     #     )
 
-    # need to call TDX to get the rerun_result 
+    # need to call TDX to get the rerun_result
     # (TODO:but currently I use batch file, need to think how to include
     # in this process)
 
@@ -1392,7 +1584,7 @@ def main():
     # result, if public is possible, leave the route empty, if only walking
     # is possible, state 'walk'. File generated named 'rerun_public_miss_pairs_results.csv'
 
-    # In sum, there are three files output in this step, 
+    # In sum, there are three files output in this step,
     # public_miss_pairs_results_1.csv, ..._2.csv, rerun_public_miss_pairs_results.csv
 
     # ---- Merges files ----
