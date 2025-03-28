@@ -54,26 +54,26 @@ class Utils():
 
         return ab_matrix + ba_matrix
 
-    def melt_mat(self, mat, index_list, is_same=False):
+    def melt_mat(self, mat, index_list, is_same=False, keep_diag=False):
         '''
         If upper triangle and lower triangle have different value, two columns
         will be generated.
-        Note that the diagonal of the matrix will be ignored.
-        => This might be modified for other purposes.
         '''
-        rows, cols = np.triu_indices(len(index_list), k=1)
+        cur_offset = 0 if keep_diag else 1
+        rows, cols = np.triu_indices(len(index_list), k=cur_offset)
 
-        data = {
-            'row_idx': [index_list[r] for r in rows],
-            'col_idx': [index_list[c] for c in cols],
-            'upper_triangle': mat[rows, cols],
-            'lower_triangle': mat[cols, rows]
-        }
         if is_same:
             data = {
                 'row_idx': [index_list[r] for r in rows],
                 'col_idx': [index_list[c] for c in cols],
                 'value': mat[rows, cols]
+            }
+        else:
+            data = {
+                'row_idx': [index_list[r] for r in rows],
+                'col_idx': [index_list[c] for c in cols],
+                'upper_triangle': mat[rows, cols],
+                'lower_triangle': mat[cols, rows]
             }
 
         return pd.DataFrame(data)
@@ -226,17 +226,35 @@ class Helper_tdx():
 
 
 class Helper_public_travel():
-    def __init__(self, calib_path='', centroid_path='', public_merged_fname='') -> None:
+    def __init__(
+            self, calib_fpath='', centroid_path='',
+            public_merged_fname='', walk_fpath=''
+        ) -> None:
         self.__rerun_pairs = deque()  # will be used as FIFO, append and popleft
 
-        calib = pd.read_csv(calib_path, dtype={'VILLCODE': 'str'})  # 1247
-        calib = calib[['VILLCODE', 'area', 'employment',
-                       'population', 'TOWNNAME', 'VILLNAME']]
+        calib = pd.read_csv(calib_fpath, dtype={'VILLCODE': 'str'})  # 1247
+        calib = calib[['VILLCODE', 'employment', 'population', 'TOWNNAME', 'VILLNAME']]
         self.__calib = calib
 
         # VILLCODE,lon,lat
-        centroids = pd.read_csv(centroid_path, dtype={"VILLCODE": 'str'})
-        self.__centroids = centroids
+        self.__centroids = pd.read_csv(centroid_path, dtype={"VILLCODE": 'str'})
+
+        # walking data
+        walk = pd.read_csv(
+            walk_fpath,
+            usecols=['id_orig', 'id_dest', 'duration'],
+            dtype={'id_orig': 'str', 'id_dest': 'str'}
+        )
+
+        # make sure A_villcode < B_villcode
+        walk[['A_villcode', 'B_villcode']] = pd.DataFrame(
+            list(map(sorted, zip(walk['id_orig'], walk['id_dest']))),
+            index=walk.index
+        )
+        # NOTE: the stacked data does not require this step, since the villcode
+        # are already in order (in the get_missing_pairs)
+
+        self.__walk = walk[['A_villcode', 'B_villcode', 'duration']]
 
         self.__pfname = public_merged_fname
 
@@ -258,8 +276,8 @@ class Helper_public_travel():
         # Both are 57
 
     def merge_public_files(
-        self, source_path: str, out_path: str = '',
-        start_time="6pm", file_cnt=20
+            self, source_path: str, out_path: str = '',
+            start_time="6pm", file_cnt=20
         ):
         '''
         This function will merge the series of files from 1 to 'file_cnt'
@@ -419,47 +437,6 @@ class Helper_public_travel():
 
         stacked.to_csv(stacked_fpath, index=False)
 
-    def fill_with_walk(self, stacked_public_path: str, walking_fpath: str, t_limit_minute=30):
-        '''
-        This function only cares about the entries that has walking time less
-        than t_limit_minute minutes.
-        '''
-        lim = t_limit_minute * 60
-
-        stacked_fpath = os.path.join(stacked_public_path, self.__pfname)
-        stacked = pd.read_csv(
-            stacked_fpath,
-            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
-        )
-
-        walk = pd.read_csv(
-            walking_fpath,
-            usecols=['id_orig', 'id_dest', 'duration'],
-            dtype={'id_orig': 'str', 'id_dest': 'str'}
-        )
-        walk = walk[walk['duration'] < lim]
-
-        walk[['A_villcode', 'B_villcode']] = pd.DataFrame(
-            list(map(sorted, zip(walk['id_orig'], walk['id_dest']))),
-            index=walk.index
-        )
-        # NOTE: the stacked data does not require this step, since the villcode
-        # are already in order (in the get_missing_pairs)
-
-        walk = walk[['A_villcode', 'B_villcode', 'duration']]
-
-        stacked = stacked.merge(walk, on=['A_villcode', 'B_villcode'], how='left')
-
-        # Care only the rows with non empty 'duration'
-        # if 'AB_time' is empty, then fill with 'duration', same for 'BA'
-        cond = stacked['duration'].notna()
-        stacked.loc[cond, 'AB_travel_time'] = stacked.loc[cond, 'AB_travel_time'].fillna(stacked.loc[cond, 'duration'])
-        stacked.loc[cond, 'BA_travel_time'] = stacked.loc[cond, 'BA_travel_time'].fillna(stacked.loc[cond, 'duration'])
-
-        stacked = stacked.drop(columns=['duration'])
-
-        stacked.to_csv(stacked_fpath, index=False)
-
     def get_rerun_pairs(
             self, data_path: str, data_fname: str,
             out_path: str, target_time: str
@@ -478,7 +455,44 @@ class Helper_public_travel():
         keep_cols = ['A_villcode', 'B_villcode', 'A_lat', 'A_lon', 'B_lat', 'B_lon']
         to_rerun = data.loc[cond, keep_cols]
 
-        to_rerun.to_csv(os.path.join(out_path, f"rerun_TDX_{target_time}.csv"), index=False)
+        out_fpath = os.path.join(out_path, f"rerun_TDX_{target_time}.csv")
+        if not os.path.exists(out_fpath):
+            to_rerun.to_csv(out_fpath, index=False)
+        else:
+            print(f"This rerun check file already exists, skip saving...")
+
+    def fill_with_walk(
+            self, data_path: str, data_fname: str,
+            out_path: str, t_limit_minute=30
+        ):
+        '''
+        This function only cares about the entries that has walking time less
+        than t_limit_minute minutes.
+        '''
+        lim = t_limit_minute * 60
+
+        fpath = os.path.join(data_path, data_fname)
+        data = pd.read_csv(fpath, dtype={'A_villcode': 'str', 'B_villcode': 'str'})
+
+        walk = self.__walk
+        walk = walk[walk['duration'] < lim]
+
+        data = data.merge(walk, on=['A_villcode', 'B_villcode'], how='left')
+
+        # Care only the rows:
+        # 1. with non empty 'duration' (meaning walking time < lim)
+        # 2. both directions missing
+        cond = (data['duration'].notna()) & (data['AB_travel_time'].isna()) & (data['BA_travel_time'].isna())
+        data.loc[cond, 'AB_travel_time'] = data.loc[cond, 'AB_travel_time'].fillna(data.loc[cond, 'duration'])
+        data.loc[cond, 'BA_travel_time'] = data.loc[cond, 'BA_travel_time'].fillna(data.loc[cond, 'duration'])
+
+        data = data.drop(columns=['duration'])
+
+        out_fpath = os.path.join(out_path, "fill_walk.csv")
+        if not os.path.exists(out_fpath):
+            data.to_csv(out_fpath, index=False)
+        else:
+            print(f"Walk data fill file already exists, skip saving...")
 
     def get_manual_check(self, data_path: str, data_fname: str, out_path: str):
         '''
@@ -499,7 +513,7 @@ class Helper_public_travel():
         if not os.path.exists(fpath):
             to_man_check.to_csv(fpath, index=False)
         else:
-            print(f"Manual check file already exists, skipping save...")
+            print(f"Manual check file already exists, skip saving...")
 
     def make_public_main(
             self, stacked_public_path: str, fill_file_path: str,
@@ -539,6 +553,33 @@ class Helper_public_travel():
         stacked['BA_travel_time'] = stacked['BA_travel_time'].fillna(stacked['AB_travel_time'])
 
         stacked.to_csv(os.path.join(out_path, "public_travel_time.csv"), index=False)
+
+    def update_with_walk(
+            self, final_public_fpath: str
+        ):
+        '''
+        This function is to update the public travel times that is longer than
+        the walking time.
+        '''
+        public_data = pd.read_csv(
+            final_public_fpath,
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+
+        public_data = public_data.merge(
+            self.__walk, on=['A_villcode', 'B_villcode'], how='left'
+        )
+
+        # if both directions are longer than walking time, then update
+        cond = (public_data['AB_travel_time'] > public_data['duration']) &\
+               (public_data['BA_travel_time'] > public_data['duration'])
+
+        public_data.loc[cond, 'AB_travel_time'] = public_data.loc[cond, 'duration']
+        public_data.loc[cond, 'BA_travel_time'] = public_data.loc[cond, 'duration']
+
+        public_data = public_data.drop(columns=['duration'])
+
+        public_data.to_csv(final_public_fpath, index=False)
 
 # ==============================================================
     def _public_data_check(self, fpath, is_both_empty=False):
@@ -580,7 +621,7 @@ class Helper_public_travel():
 
         # print(data.head(5))
 
-        # 1. Preserve the valid VILLCODE (could be ignored when merging village to township, there's a step doing this)
+        # 1. Preserve the valid VILLCODE (could be ignored when merging neighborhood to counties, there's a step doing this)
         keep_villcodes = calib_info['VILLCODE']
         data = data[data['A_villcode'].isin(keep_villcodes)]
         data = data[data['B_villcode'].isin(keep_villcodes)]
@@ -903,14 +944,13 @@ class Helper_public_travel():
 
 class Helper_travel_cost():
     def __init__(self, calib_path='') -> None:
-        calib = pd.read_csv(calib_path)  # 1247
-        calib = calib[['VILLCODE', 'area', 'employment',
-                       'population', 'TOWNNAME', 'VILLNAME']]
+        calib = pd.read_csv(calib_path, dtype={'VILLCODE': 'str'})  # 1247
+        calib = calib[['VILLCODE', 'employment','population', 'TOWNNAME', 'VILLNAME']]
         self.__calib = calib
 
-    def __flawed_village_to_township(self, mode: str, calib_info: pd.DataFrame, to_file: bool = True):
+    def __flawed_neighborhood_to_county(self, mode: str, calib_info: pd.DataFrame, to_file: bool = True):
         '''
-        This function is to merge the village-wise travel times to township-wise
+        This function is to merge the village-wise travel times to county-wise
         public columns: A_villcode,B_villcode,A_lat,A_lon,B_lat,B_lon,AB_travel_time,AB_ttl_cost,AB_transfer_cnt,AB_route,BA_travel_time,BA_ttl_cost,BA_transfer_cnt,BA_route
         private columns: id_orig,lon_orig,lat_orig,id_dest,lon_dest,lat_dest,query_status,timeofday,dayofweek,date,weight_name,distance,duration
 
@@ -921,7 +961,7 @@ class Helper_travel_cost():
 
         Return
         ------
-            the township-wise travel time
+            the county-wise travel time
         '''
         mode = mode.lower()
         if mode == 'public':
@@ -1002,27 +1042,27 @@ class Helper_travel_cost():
 
         # recording_pairs_no_travel_time(mat)
 
-        # ===================================
-        #  Start merging village to township
-        # ===================================
-        # NOTE: since computing Township level using the original table would
+        # =========================================
+        #  Start merging neighborhoods to counties
+        # =========================================
+        # NOTE: since computing county level using the original table would
         #       be easier, we don't need matrix now
         # 1. get the weights for each villcode by population
-        calib_info['township'] = calib_info['VILLCODE'].astype("str").str[:-3]
+        calib_info['county'] = calib_info['VILLCODE'].astype("str").str[:-3]
         calib_info['weight'] = calib_info['population'] / \
-            calib_info.groupby('township')['population'].transform('sum')
+            calib_info.groupby('county')['population'].transform('sum')
         weights = calib_info[['VILLCODE', 'weight']]
 
-        # 2. A and B cols make their township code: township_A and township_B
-        df['A_township'] = df[a_col].astype("str").str[:-3]
-        df['B_township'] = df[b_col].astype("str").str[:-3]
+        # 2. A and B cols make their county code: county_A and county_B
+        df['A_county'] = df[a_col].astype("str").str[:-3]
+        df['B_county'] = df[b_col].astype("str").str[:-3]
 
         start_pt = {
             'A': {'dest': 'B', 'vill_a': a_col, 'vill_b': b_col, 'time': ab_time_col},
             'B': {'dest': 'A', 'vill_a': b_col, 'vill_b': a_col, 'time': ba_time_col}
         }
 
-        township_travel_dfs = []
+        county_travel_dfs = []
 
         # following steps will use A to B as example
         for start, info in start_pt.items():
@@ -1034,15 +1074,15 @@ class Helper_travel_cost():
             merged_df['weighted_time_A'] = merged_df[info['time']] * \
                 merged_df['weight_A']
 
-            # 4. for each A_township (A or B doesn't matter, should have the same amount),
+            # 4. for each A_county (A or B doesn't matter, should have the same amount),
             #       group by B: sum the products from prev step
             #       and then times with the weights mapped with B
-            #       and then group sum by township_B
-            for town in set(df[f'{start}_township']):
-                town_df = merged_df[merged_df[f'{start}_township'] == town]
+            #       and then group sum by county_B
+            for town in set(df[f'{start}_county']):
+                town_df = merged_df[merged_df[f'{start}_county'] == town]
                 # 4-1
                 by_villb_df = town_df.groupby(
-                    [f"{info['dest']}_township", info['vill_b']], as_index=False
+                    [f"{info['dest']}_county", info['vill_b']], as_index=False
                 )['weighted_time_A'].sum()
                 # 4-2
                 by_villb_df = by_villb_df.merge(
@@ -1053,25 +1093,25 @@ class Helper_travel_cost():
                     by_villb_df['weight_B']
                 # 4-3
                 result = by_villb_df.groupby(
-                    f"{info['dest']}_township", as_index=False
+                    f"{info['dest']}_county", as_index=False
                 )['weighted_time_B'].sum()
 
-                # Force all the dest column to be B_township (even if it was actually A)
+                # Force all the dest column to be B_county (even if it was actually A)
                 # since the layout of this travel data would not be the same as in village
                 # this will be just A, B, time for all pairs (was A, B, AB_time, BA_time)
-                result.columns = ['B_township', 'time']
-                result['A_township'] = town
+                result.columns = ['B_county', 'time']
+                result['A_county'] = town
                 # rearrange column order
-                result = result[['A_township', 'B_township', 'time']]
+                result = result[['A_county', 'B_county', 'time']]
 
-                township_travel_dfs.append(result)
+                county_travel_dfs.append(result)
 
         town_travel_times = pd.concat(
-            township_travel_dfs, ignore_index=True)  # 1178
+            county_travel_dfs, ignore_index=True)  # 1178
 
         # Check for duplicate rows based on 'col1' and 'col2'
         duplicates = town_travel_times[town_travel_times.duplicated(
-            subset=['A_township', 'B_township'], keep=False)]
+            subset=['A_county', 'B_county'], keep=False)]
 
         # print(duplicates)
 
@@ -1081,65 +1121,56 @@ class Helper_travel_cost():
             return
         return df
 
-    def village_to_township(self, mode: str, out_fpath: str = ''):
+    def neighborhood_to_county(self, mode: str, in_path: str, out_path: str):
         '''
-        This function is to merge the village-wise travel times to township-wise
-        public columns: A_villcode,B_villcode,A_lat,A_lon,B_lat,B_lon,AB_travel_time,AB_ttl_cost,AB_transfer_cnt,AB_route,BA_travel_time,BA_ttl_cost,BA_transfer_cnt,BA_route
-        private columns: id_orig,lon_orig,lat_orig,id_dest,lon_dest,lat_dest,query_status,timeofday,dayofweek,date,weight_name,distance,duration
+        This function is to merge the neighborhood-wise travel times to
+        county-wise. The travel time is weighted by population for departure
+        and employment for destination.
 
         Parameters
         ----------
         mode: str.
             only supports 'private' and 'public'
+        out_fpath: str.
+            the file path to save the output files.
 
         Return
         ------
-            the township-wise travel time
+            the county-wise travel time
         '''
         calib_info = self.__calib
 
         mode = mode.lower()
-        if mode == 'public':
-            folded_pair = pd.read_csv(
-                f"{PUBLIC_PATH}{mode}_travel_time.csv")
-            a_col = 'A_villcode'
-            b_col = 'B_villcode'
-            ab_time_col = 'AB_travel_time'
-            ba_time_col = 'BA_travel_time'
-        elif mode == 'private':
-            folded_pair = pd.read_csv(
-                f"{PRIVATE_PATH}{mode}_travel_time.csv")
-            a_col = 'id_orig'
-            b_col = 'id_dest'
-            # back and forth share the same time for driving
-            ab_time_col = 'duration'
-            ba_time_col = 'duration'
-        else:
-            raise ValueError("receive only either 'public' or 'private'.")
-        print(f"Currently working on {mode}!")
 
-        # Filter the villages (both origin and destination)
+        folded_pair = pd.read_csv(
+            os.path.join(in_path, f"{mode}_travel_time.csv"),
+            dtype={'A_villcode': 'str', 'B_villcode': 'str'}
+        )
+
+        a_col = 'A_villcode'
+        b_col = 'B_villcode'
+        ab_time_col = 'AB_travel_time'
+        ba_time_col = 'BA_travel_time'
+
+        # Filter the neighborhoods (both origin and destination)
         keep_villcodes = calib_info['VILLCODE']
         folded_pair = folded_pair[folded_pair[a_col].isin(keep_villcodes)]
         folded_pair = folded_pair[folded_pair[b_col].isin(keep_villcodes)]
 
-        # ===================================
-        #  Start merging village to township
-        # ===================================
-        # NOTE: since computing Township level using the original table would
-        #       be easier, we don't need matrix now
+        # =========================================
+        #  Start merging neighborhoods to counties
+        # =========================================
         # 1. get the weights for each villcode by population
-        #    VILLCODE: cccttttttvvv (city, township, village)
-        #    weight for origin: population; weight for destination: employment
-        calib_info['township'] = calib_info['VILLCODE'].astype("str").str[:-3]
+        #    VILLCODE: cccttttttvvv (city, county, village)
+        #    weights for neighborhoods are summed to 1 for each county
+        calib_info['county'] = calib_info['VILLCODE'].str[:-3]
         calib_info['weight_A'] = calib_info['population'] / \
-            calib_info.groupby('township')['population'].transform('sum')
+            calib_info.groupby('county')['population'].transform('sum')
         calib_info['weight_B'] = calib_info['employment'] / \
-            calib_info.groupby('township')['employment'].transform('sum')
+            calib_info.groupby('county')['employment'].transform('sum')
         weights = calib_info[['VILLCODE', 'weight_A', 'weight_B']]
 
-        # 2. Concate A to B and B to A into a long data with columns:
-        #    vill_a, vill_b, time
+        # 2. Stack A->B and B->A into long data
         new_cols = ['vill_a', 'vill_b', 'time']
         AB_df = folded_pair[[a_col, b_col, ab_time_col]]
         AB_df.columns = new_cols
@@ -1148,12 +1179,12 @@ class Helper_travel_cost():
 
         all_pair = pd.concat([AB_df, BA_df], ignore_index=True)
 
-        all_pair['town_a'] = all_pair['vill_a'].astype("str").str[:-3]
-        all_pair['town_b'] = all_pair['vill_b'].astype("str").str[:-3]
+        all_pair['town_a'] = all_pair['vill_a'].str[:-3]
+        all_pair['town_b'] = all_pair['vill_b'].str[:-3]
 
-        # each element is the travel times from single town to all other towns
+        # each element is the travel times from single town to all other counties
         # (including itself)
-        township_travel_dfs = []
+        county_travel_dfs = []
 
         # 3. AB_time x weights mapped to A
         merged_df = all_pair.merge(
@@ -1162,10 +1193,10 @@ class Helper_travel_cost():
         )
         merged_df['weighted_t_A'] = merged_df['time'] * merged_df['weight_A']
 
-        # 4. for each town_A (A or B doesn't matter, should have the same amount),
-        #       group by vill_B: sum the products from prev step
-        #       and then times with the weights mapped with vill_B
-        #       and then group sum by town_B
+        # 4. each town (A or B doesn't matter, should be the same set),
+        #    4-1 group by vill_B: sum the weighted time of A
+        #    4-2 and then times with the weights mapped with vill_B
+        #    4-3 and then group sum by town_B
         for town in set(all_pair['town_a']):
             town_df = merged_df[merged_df['town_a'] == town]
             # 4-1
@@ -1182,7 +1213,7 @@ class Helper_travel_cost():
             result = by_villb_df.groupby(
                 'town_b', as_index=False)['weighted_t_B'].sum()
 
-            # Force all the dest column to be B_township (even if it was actually A)
+            # Force all the dest column to be B_county (even if it was actually A)
             # since the layout of this travel data would not be the same as in village
             # this will be just A, B, time for all pairs (was A, B, AB_time, BA_time)
             result.columns = ['town_b', 'time']
@@ -1190,10 +1221,10 @@ class Helper_travel_cost():
             # rearrange column order
             result = result[['town_a', 'town_b', 'time']]
 
-            township_travel_dfs.append(result)
+            county_travel_dfs.append(result)
 
         town_travel_times = pd.concat(
-            township_travel_dfs, ignore_index=True)  # 961
+            county_travel_dfs, ignore_index=True)  # 961
 
         # sort town_a and town_b for clear matrix demonstration
         town_travel_times = town_travel_times.sort_values(
@@ -1210,35 +1241,37 @@ class Helper_travel_cost():
         has_zero_or_nan = has_zero or has_nan
         # print(has_zero_or_nan)
 
-        if out_fpath:
-            town_time_mat.to_csv(out_fpath, index=False)
+        if out_path:
+            fpath = os.path.join(out_path, f"{mode}_county_tt_mat.csv")
+            town_time_mat.to_csv(fpath, index=False)
             return
         return town_time_mat
 
     def process_survey(
-            self,
-            years: list,
-            public_pct_out_fpath: str = '',
-            private_pct_out_fpath: str = ''
-    ):
+            self, years: list, survey_raw: str,
+            survey_scratch: str, out_path: str
+        ):
         '''
-        This function will read all the raw survey data, clean them, and then
-        save the cleaned and merged data to a new file.
+        This function will read, clean, and stack the survey data of specific
+        years.
+        There will be two types of file generated:
+        1. commuting_flow.csv: the count of county pairs as the commuting flow
+        2. transit mode count: will have public and private mode count files
 
         The process is as follows:
         1. since some of the columns are coded, before processing the data, we
            read the code mapping table from the official code book
            "變數名稱說明檔_98-105.csv"
-           (specifically, transit mode and towns are coded)
-        2. then we keep only the towns in the calibration data
+           (specifically, transit mode and counties are coded)
+        2. then we keep only the counties in the calibration data
         3. I manually divide the transit modes into public and private
            (based on our discussion), and the result were saved in a file
            called "transportation_code.csv"
         4. when processing survey data,
         '''
         # From codebook
-        # 1. township code at A192:B585 (NTP: 1XX, TP: 22XX)
-        town_code = pd.read_csv(f"{DATA_PATH}survey_data/變數名稱說明檔_98-105.csv")
+        # 1. county code at A192:B585 (NTP: 1XX, TP: 22XX)
+        town_code = pd.read_csv(os.path.join(survey_raw, "變數名稱說明檔_98-105.csv"))
         town_code = town_code.iloc[191:, :2]
         town_code.columns = ['code', 'town']
 
@@ -1250,10 +1283,10 @@ class Helper_travel_cost():
         cond_tp = town_code['code'].between(2200, 2299)
         town_code = town_code[cond_ntp | cond_tp]
 
-        # Base the townships needed on the Calibration data
+        # Base the counties needed on the calibration data,
+        # so calib on left when merging
         town_code_TP = self.__calib
-        town_code_TP['TOWNCODE'] = town_code_TP['VILLCODE']\
-            .astype("str").str[:-3]
+        town_code_TP['TOWNCODE'] = town_code_TP['VILLCODE'].str[:-3]
         town_code_TP = town_code_TP[['TOWNCODE', 'TOWNNAME']]
         town_code_TP = town_code_TP.drop_duplicates(
             subset='TOWNCODE', keep='first').reset_index(drop=True)
@@ -1269,26 +1302,23 @@ class Helper_travel_cost():
         #    10 國道客運, 11 飛機, 12 步行, 13 自行車, 14 機車, 15 自用小客車(含小客貨兩用車), 16 自用大客車,
         #    17 自用小貨車, 18 自用大貨車(含大客貨兩用車), 19 免費公車, 31 國道客運, 32 公路客運, 33 復康巴士,
         #    97 其他, 98 不知道/拒答, NULL 未填答
-        # this file is a manual extraction from the 變數名稱說明檔_98-105.csv
-        mode_codes = pd.read_csv(f"{SURVEY_PATH}transportation_code.csv")
-
-        mode_codes['code'] = mode_codes['code'].astype(int)
-
-        fine_mode = mode_codes[['code', 'mode']]
-        coarse_mode = mode_codes[['code', 'coarse_mode']]
-        public_private = mode_codes[['code', 'public_private']]
+        # read the manual extraction and classification of the file 變數名稱說明檔_98-105.csv
+        mode_codes = pd.read_csv(
+            os.path.join(survey_scratch, "transportation_code.csv"),
+            dtype={'code': 'int'}
+        )
 
         # ================
         #  Start Cleaning
         # ================
-        # only keep the mapping of columns we need.
+        # mapping of the columns we need.
         col_name_map = {
             'v13': 'Age',
             'v12': 'Gender',  # 1: men, 2: women
-            'v2_1': 'Residence',  # = 'code', check "town_code_TP" above
+            'v2_1': 'Residence',  # use the county code
             'v3_1': 'Working_or_studying',  # 1: work, 2: study, 3: both, 98: none
-            'v4A': 'Workplace',  # check "town_code_TP"
-            'v4B': 'School',  # check "town_code_TP"
+            'v4A': 'Workplace',  # use the county code
+            'v4B': 'School',  # use the county code
             'v5_1': 'Transportation_1',  # mode_codes for all columns below
             'v5_2': 'Transportation_2',
             'v5_3': 'Transportation_3',
@@ -1298,20 +1328,19 @@ class Helper_travel_cost():
             'v5_7': 'Transportation_7',
             'v5_8': 'Transportation_8',
             'v5_9': 'Transportation_9',
-            'v5_10': 'Transportation_10',  # 較常使用
-            'v6': 'Daily_transport'  # 最常使用
+            'v5_10': 'Transportation_10',  # 1-10 is often used
+            'v6': 'Daily_transport'  # this is mostly used
         }
 
         survey_files = []
 
         for y in years:
-            file_path = f"{SURVEY_PATH}{y}年民眾日常使用運具狀況調查原始資料.csv"
+            file_path = os.path.join(survey_raw, f"{y}年民眾日常使用運具狀況調查原始資料.csv")
             cur_file = pd.read_csv(file_path, usecols=col_name_map.keys())
 
             # 1. for each file, keep only the columns above, make a year column
             #    and then stack them up
             cur_file.rename(columns=col_name_map, inplace=True)
-
             cur_file['year'] = y + 1911
 
             survey_files.append(cur_file)
@@ -1328,14 +1357,14 @@ class Helper_travel_cost():
         # print(f"NaN and 0 (empty string) check:\n{check}")
 
         # 2. get the "TOWNCODE" used in travel cost
-        #    right join to filter residence/start point (align with calibrated towns)
+        #    right join to filter residence/start point (align with calibrated counties)
         survey_df = survey_df.merge(
             town_code_TP.rename(
                 columns={"TOWNCODE": 'A_TOWNCODE', "TOWNNAME": 'A_TOWNNAME'}),
             left_on='Residence', right_on='code', how='right'
         )
 
-        # Dest: need only one of work or school to be in calibrated towns
+        # Dest: need only one of work or school to be in calibrated counties
         survey_df['Dest'] = np.where(
             survey_df['Workplace'].isin(town_code_TP['code']),
             survey_df['Workplace'],
@@ -1349,7 +1378,7 @@ class Helper_travel_cost():
         # Drop if there are no destination (== 0)
         survey_df = survey_df[survey_df['Dest'] != 0]
 
-        # Make sure destination fall in calibrated towns
+        # Make sure destination fall in calibrated counties
         survey_df = survey_df.merge(
             town_code_TP.rename(
                 columns={"TOWNCODE": 'B_TOWNCODE', "TOWNNAME": 'B_TOWNNAME'}),
@@ -1362,7 +1391,7 @@ class Helper_travel_cost():
             'B_TOWNCODE', 'B_TOWNNAME', 'Daily_transport'
         ]]
 
-        # the code below shows only 7534 records are cross-township (total record count is 13280)
+        # the code below shows only 7534 records are cross-county (total record count is 13280)
         # tmp = survey_df[survey_df['A_TOWNCODE'] != survey_df['B_TOWNCODE']]
         # print(tmp[['A_TOWNNAME', 'B_TOWNNAME']])
 
@@ -1396,9 +1425,17 @@ class Helper_travel_cost():
             # counts['pct'] = counts['pct'].round(1)
             # print(counts)
 
-        # ==========================
-        #  Get the travle pair data
-        # ==========================
+        # =============================
+        #  Get the commuting flow data
+        # =============================
+        # get count of each pair
+        commuting_flow = survey_df.groupby(
+            ['A_TOWNCODE', 'B_TOWNCODE']
+        ).size().reset_index(name='count')
+
+        # =========================
+        #  Get the mode count data
+        # =========================
         # NOTE: if there are < 1 count of sum of counts of private and public, then drop this pair.
         # 1. group by A-B pairs and get the count for public and private
         pair_result = survey_df.groupby(
@@ -1413,24 +1450,23 @@ class Helper_travel_cost():
 
         pair_result.columns.name = None  # was 'public_private'
 
-        # pair_result['public_pct'] = pair_result['public'] / (pair_result['public'] + pair_result['private'])
-
-        # TODO: the following might be able to use the to_mat function
-        # 2. turn the dataframe into matrix (but there are missing pairs)
-        full_code = town_code_TP['TOWNCODE'].tolist()
+        # 2. Turn the dataframe into matrix (but there are missing pairs)
+        full_code = town_code_TP['TOWNCODE'].tolist()  # calibrated counties
 
         complete_index = pd.MultiIndex.from_product([full_code, full_code], names=['A_TOWNCODE', 'B_TOWNCODE'])
         result_full = pair_result.set_index(['A_TOWNCODE', 'B_TOWNCODE']).reindex(complete_index, fill_value=0).reset_index()
 
         # Create a matrix with A_TOWNCODE as rows and B_TOWNCODE as columns for public_count
-        public_count_matrix = result_full.pivot(index='A_TOWNCODE', columns='B_TOWNCODE', values='public').fillna(0)
-        private_count_matrix = result_full.pivot(index='A_TOWNCODE', columns='B_TOWNCODE', values='private').fillna(0)
+        pub_cnt_mat = result_full.pivot(index='A_TOWNCODE', columns='B_TOWNCODE', values='public').fillna(0)
+        pri_cnt_mat = result_full.pivot(index='A_TOWNCODE', columns='B_TOWNCODE', values='private').fillna(0)
 
-        if public_pct_out_fpath:
-            public_count_matrix.to_csv(public_pct_out_fpath, index=False)
-            private_count_matrix.to_csv(private_pct_out_fpath, index=False)
-            return
-        return public_count_matrix, private_count_matrix
+        # ==============
+        #  Save to file
+        # ==============
+        commuting_flow.to_csv(os.path.join(out_path, 'commuting_flow.csv'), index=False)
+        pub_cnt_mat.to_csv(os.path.join(out_path, 'public_mode_cnt.csv'), index=False)
+        pri_cnt_mat.to_csv(os.path.join(out_path, 'private_mode_cnt.csv'), index=False)
+
 
 
 def TDX_helper():
@@ -1627,9 +1663,9 @@ def main():
         private_pct_out_fpath=f"{DATA_PATH}private_mode_cnt.csv"
     )
 
-    # Combine village to township
+    # Combine village to county
     # for m in ['public', 'private']:
-    #     htc.village_to_township(mode=m, out_fpath=f"{DATA_PATH}{m}_town_travel_mat.csv")
+    #     htc.village_to_county(mode=m, out_fpath=f"{DATA_PATH}{m}_town_travel_mat.csv")
     #     print(f"{m} done.")
 
 if __name__ == "__main__":

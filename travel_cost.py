@@ -19,10 +19,10 @@ class LargerStep:
 
 
 def travel_cost(
-    params: list,
-    public_travel_mat: np.ndarray,
-    private_travel_mat: np.ndarray
-):
+        params: list,
+        public_travel_mat: np.ndarray,
+        private_travel_mat: np.ndarray
+    ):
     g_pub, g_pri, d_pub, d_pri = params
     v = 1  # constant in current version
 
@@ -32,19 +32,19 @@ def travel_cost(
     return -v * np.log(tmp_pub + tmp_pri)
 
 def travel_log_likelihood(
-    params: list,
-    public_travel_mat: np.ndarray,
-    private_travel_mat: np.ndarray,
-    public_transport_cnt_mat: np.ndarray,
-    private_transport_cnt_mat: np.ndarray
-):
+        params: list,
+        public_travel_mat: np.ndarray,
+        private_travel_mat: np.ndarray,
+        public_transport_cnt_mat: np.ndarray,
+        private_transport_cnt_mat: np.ndarray
+    ):
     '''
     All the matrix are np 2d array, rather than pd.DataFrame.
 
     Parameters
     ----------
     params: dict.
-        assume the keys are gamma_public, gamma_private, delta_public, 
+        assume the keys are gamma_public, gamma_private, delta_public,
         delta_private, v (but we are not changing v, set to 1)
     '''
     g_pub, g_pri, d_pub, d_pri = params
@@ -71,7 +71,7 @@ def travel_log_likelihood(
     #     + public_transport_cnt_mat * np.log(prob_pub_mat)
     ln_Lt_mat = private_transport_cnt_mat * np.log(prob_pri_mat) \
         + public_transport_cnt_mat * np.log(prob_pub_mat)
-    
+
     # ln_Lt_mat[have_transport_cnt] => would make the valid (True) values into a list
     ln_L = sum(ln_Lt_mat[have_transport_cnt])
 
@@ -79,14 +79,13 @@ def travel_log_likelihood(
 
 
 def find_param(
-        initial_params, 
-        public_travel_mat, private_travel_mat, 
+        initial_params,
+        public_travel_mat, private_travel_mat,
         public_transport_cnt_mat, private_transport_cnt_mat,
         show_stats=True
-):
+    ):
     '''
-    This function...
-    Notice that the transport data is the aggregation of all available years, 
+    Notice that the transport data is the aggregation of all available years,
     since single year matrix might have too many 0s.
     '''
     g_pub, g_pri = initial_params["gamma_public"], initial_params["gamma_private"]
@@ -121,16 +120,17 @@ def find_param(
         # constraints=constraints
     )
 
+    # tried to increase the step size to avoid local minimum, but didn't work
     # res = basinhopping(
     #     func=travel_log_likelihood,
     #     x0=init_param_set,
     #     minimizer_kwargs={
     #         "args": (public_travel_mat, private_travel_mat, public_transport_cnt_mat, private_transport_cnt_mat),
-    #         "method": 'L-BFGS-B', 
+    #         "method": 'L-BFGS-B',
     #         "bounds": bounds
     #     },
     #     niter=200,  # Number of basin-hopping iterations
-    #     # take_step=LargerStep(stepsize=0.5),  # Increase step size
+    #     take_step=LargerStep(stepsize=0.5),  # Increase step size
     #     seed=527  # For reproducibility
     # )
 
@@ -154,11 +154,11 @@ def find_param(
 
 
 def manual_minimize(
-    init_val: float, bounds: list, 
-    public_travel_mat, private_travel_mat,
-    public_transport_cnt_mat, private_transport_cnt_mat,
-    show_plot=False, **step_settings
-):
+        init_val: float, bounds: list,
+        public_travel_mat, private_travel_mat,
+        public_transport_cnt_mat, private_transport_cnt_mat,
+        show_plot=False, **step_settings
+    ):
     '''
     Since the minimization function seemed trapped in the local minimum, this
     function manually test different initial values and check where the global
@@ -179,6 +179,10 @@ def manual_minimize(
     step_settings
         Currently consist of step_size and step_method. Will use the stated
         settings to find test values within the range, starting from init_val.
+
+    Return
+    ------
+        A list of optimal params
     '''
     step_size = step_settings['step_size']
     mthd = step_settings['step_method']
@@ -205,15 +209,15 @@ def manual_minimize(
     for v in test_vals:
         params = {
             "gamma_public": v,  # fixed cost
-            "gamma_private": v, 
+            "gamma_private": v,
             "delta_public": 0.5,  # marginal cost (of travel time)
-            "delta_private": 0.5, 
+            "delta_private": 0.5,
             "v": 1  # kind of like the likelihood of substitution between modes, close to 1 means low substitution.
         }
 
         optimal_params, lkh = find_param(
             params,
-            public_travel_mat=public_travel_mat, 
+            public_travel_mat=public_travel_mat,
             private_travel_mat=private_travel_mat,
             public_transport_cnt_mat=public_transport_cnt_mat,
             private_transport_cnt_mat=private_transport_cnt_mat,
@@ -222,13 +226,14 @@ def manual_minimize(
 
         record.append({'params': optimal_params, 'lkh': lkh})
 
-    srs = [(rec['lkh'] - 8725.91983) * 1000000 for rec in record]  # for display agjustment, past: 1639.58845
+    # srs = [(rec['lkh'] - 8725.91983) * 1000000 for rec in record]  # for display agjustment, past: 1639.58845
+    srs = [rec['lkh'] for rec in record]
     # srs = [val for val in srs if val < 3]  # for display agjustment
 
     if show_plot:
         plt.plot(srs, marker='o', markersize=3, linestyle='-', color='black', label='Series')
         # plt.xticks(ticks=range(len(srs)), labels=test_vals, fontsize=8)
-        plt.ylim(3.5, 4.5)  # for display agjustment, past: (2.4605, 2.4615)
+        # plt.ylim(3.5, 4.5)  # for display agjustment, past: (2.4605, 2.4615)
         plt.xticks(ticks=[0, len(srs)-1], labels=[min(test_vals), max(test_vals)], fontsize=8)
         plt.grid(axis='y', linestyle='--', alpha=0.7)  # "True" for both direction
         plt.show()
@@ -242,16 +247,16 @@ def ek_estimation(commuting_flow_mat: pd.DataFrame, travel_cost_mat: pd.DataFram
     '''
     The estimation equation is as follows:
         ln pi_{ij} = epsilon * k * travel_cost_{ij} + orig_FE + dest_FE + error_term.
-    where FE stands for fixed effect, and the goal is to estimate epsilon * k 
+    where FE stands for fixed effect, and the goal is to estimate epsilon * k
     (the parameter of travel_cost)
 
     Parameters
     ----------
     commuting_flow_mat: pd.DataFrame.
-        the data from survey, assume the order of orig on rows and dest on 
+        the data from survey, assume the order of orig on rows and dest on
         columns to be the same.
     travel_cost_mat: pd.DataFrame.
-        the data result from other functions in this file, assume the order of 
+        the data result from other functions in this file, assume the order of
         orig on rows and dest on columns to be the same.
 
     Reutrn
@@ -288,7 +293,7 @@ def ek_estimation(commuting_flow_mat: pd.DataFrame, travel_cost_mat: pd.DataFram
     panel_data['dest'] = panel_data['dest'].astype('category')
 
     ppml_model = pf.feols(
-        "commuting_flow ~ travel_cost | orig + dest", 
+        "commuting_flow ~ travel_cost | orig + dest",
         data=panel_data, family="poisson"
     )
     ppml_model.vcov("cluster", ["orig", "dest"])
@@ -300,7 +305,7 @@ def ek_estimation(commuting_flow_mat: pd.DataFrame, travel_cost_mat: pd.DataFram
 def main():
     print("Start getting travel cost...")
 
-    # Transit mode count from survey data 
+    # Transit mode count from survey data
     # (also serve as commuting flow when aggregated by orig and dest)
     public_transport_cnt = pd.read_csv(f"{DATA_PATH}public_mode_cnt.csv")
     private_transport_cnt = pd.read_csv(f"{DATA_PATH}private_mode_cnt.csv")
@@ -312,7 +317,7 @@ def main():
     private_travel_mat = pd.read_csv(f"{DATA_PATH}private_town_travel_mat.csv").values
     private_travel_mat = private_travel_mat / 60
 
-    # Manual search for 'global' minimum 
+    # Manual search for 'global' minimum
     # (tested on the range of 0.01 ~ 1 ~ 99, and found the minimum is more
     # likely lies in 0.01 ~ 1, based on the plot of the likelihood values)
     step_setting = {
@@ -321,7 +326,7 @@ def main():
     }
 
     opt = manual_minimize(
-        init_val=1, 
+        init_val=1,
         bounds=[0.01, 1],  # other test: [0.01, 1], [1, 99]
         public_travel_mat=public_travel_mat,
         private_travel_mat=private_travel_mat,
